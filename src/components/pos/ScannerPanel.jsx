@@ -47,7 +47,6 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
       setCameraActive(true)
       setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
     } catch (error) {
-      console.error('[Scanner camera] getUserMedia failed:', error)
       setCameraActive(false)
       setCameraMessage('No se pudo activar la camara.')
       setCameraError(cameraErrorMessage(error))

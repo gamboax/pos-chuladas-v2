@@ -16,13 +16,17 @@ export async function saveSale(sale) {
   const saleResult = await insertSaleWithCompatibleColumns(salePayload)
 
   if (saleResult.localFallback) {
-    console.error('[Supabase saveSale] fallback local:', saleResult.reason)
+    logSupabaseError('[Supabase saveSale] fallback local:', saleResult.reason)
     return saveLocalSale(sale, saleResult.reason)
   }
 
   if (saleResult.error) {
-    console.error('[Supabase saveSale] sales insert failed:', saleResult.error)
-    throw new Error(`No se pudo guardar en Supabase: ${saleResult.error.message}`)
+    logSupabaseError('[Supabase saveSale] sales insert failed:', saleResult.error)
+    if (isNetworkError(saleResult.error)) {
+      return saveLocalSale(sale, offlineReason())
+    }
+
+    throw new Error(`No se pudo guardar en Supabase: ${friendlySupabaseMessage(saleResult.error)}`)
   }
 
   const savedSale = saleResult.data
@@ -44,12 +48,12 @@ export async function saveSale(sale) {
   const { data: savedItems, error: itemsError } = await insertSaleItemsWithCompatibleColumns(saleItems)
 
   if (itemsError) {
-    console.error('[Supabase saveSale] sale_items insert failed:', itemsError, saleItems)
+    logSupabaseError('[Supabase saveSale] sale_items insert failed:', itemsError, saleItems)
     if (isMissingSchemaError(itemsError)) {
       return saveLocalSale(sale, 'La tabla sale_items no existe o no esta expuesta en Supabase.')
     }
 
-    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${itemsError.message}`)
+    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${friendlySupabaseMessage(itemsError)}`)
   }
 
   await relateSaleItemsToInventory(savedItems || [])
@@ -124,7 +128,17 @@ export async function fetchTodayAdminData(filters = {}) {
   const [salesResult, expensesResult, cashCutsResult] = await Promise.all([salesQuery, expensesQuery, cashCutsQuery])
 
   if (salesResult.error) {
-    console.error('[Supabase fetchTodayAdminData] sales select failed:', salesResult.error)
+    logSupabaseError('[Supabase fetchTodayAdminData] sales select failed:', salesResult.error)
+    if (isNetworkError(salesResult.error)) {
+      return {
+        storage: 'local',
+        reason: offlineReason(),
+        sales: readLocalSales().filter(isTodaySale).filter((sale) => matchesCity(sale, cityFilter)),
+        expenses: [],
+        cashCuts: []
+      }
+    }
+
     if (isMissingSchemaError(salesResult.error)) {
       return {
         storage: 'local',
@@ -135,22 +149,26 @@ export async function fetchTodayAdminData(filters = {}) {
       }
     }
 
-    throw new Error(salesResult.error.message || 'No se pudieron cargar ventas del dia.')
+    throw new Error(friendlySupabaseMessage(salesResult.error) || 'No se pudieron cargar ventas del dia.')
   }
 
   if (expensesResult.error && !isMissingSchemaError(expensesResult.error)) {
-    console.error('[Supabase fetchTodayAdminData] expenses select failed:', expensesResult.error)
-    throw new Error(expensesResult.error.message || 'No se pudieron cargar gastos del dia.')
+    logSupabaseError('[Supabase fetchTodayAdminData] expenses select failed:', expensesResult.error)
+    if (!isNetworkError(expensesResult.error)) {
+      throw new Error(friendlySupabaseMessage(expensesResult.error) || 'No se pudieron cargar gastos del dia.')
+    }
   }
 
   if (cashCutsResult.error && !isMissingSchemaError(cashCutsResult.error)) {
-    console.error('[Supabase fetchTodayAdminData] cash_cuts select failed:', cashCutsResult.error)
-    throw new Error(cashCutsResult.error.message || 'No se pudieron cargar cortes de caja.')
+    logSupabaseError('[Supabase fetchTodayAdminData] cash_cuts select failed:', cashCutsResult.error)
+    if (!isNetworkError(cashCutsResult.error)) {
+      throw new Error(friendlySupabaseMessage(cashCutsResult.error) || 'No se pudieron cargar cortes de caja.')
+    }
   }
 
   return {
     storage: 'supabase',
-    reason: expensesResult.error || cashCutsResult.error ? 'Faltan tablas de gastos/cortes. Ejecuta el ALTER puntual de Supabase.' : '',
+    reason: buildAdminDataReason(expensesResult.error, cashCutsResult.error),
     city: cityFilter || '',
     sales: salesResult.data || [],
     expenses: expensesResult.error ? [] : expensesResult.data || [],
@@ -189,7 +207,18 @@ export async function fetchInventoryData() {
 
   if (lotsResult.error || lotItemsResult.error) {
     const error = lotsResult.error || lotItemsResult.error
-    console.error('[Supabase fetchInventoryData] inventory select failed:', error)
+    logSupabaseError('[Supabase fetchInventoryData] inventory select failed:', error)
+    if (isNetworkError(error)) {
+      return {
+        storage: 'local',
+        reason: offlineReason(),
+        lots: [],
+        lotItems: [],
+        productCodes: [],
+        saleItems: []
+      }
+    }
+
     if (isMissingSchemaError(error)) {
       return {
         storage: 'supabase',
@@ -201,17 +230,17 @@ export async function fetchInventoryData() {
       }
     }
 
-    throw new Error(error.message || 'No se pudo cargar inventario.')
+    throw new Error(friendlySupabaseMessage(error) || 'No se pudo cargar inventario.')
   }
 
   if (codesResult.error && !isMissingSchemaError(codesResult.error)) {
-    console.error('[Supabase fetchInventoryData] product_codes select failed:', codesResult.error)
-    throw new Error(codesResult.error.message || 'No se pudieron cargar codigos de producto.')
+    logSupabaseError('[Supabase fetchInventoryData] product_codes select failed:', codesResult.error)
+    throw new Error(friendlySupabaseMessage(codesResult.error) || 'No se pudieron cargar codigos de producto.')
   }
 
   if (saleItemsResult.error && !isMissingSchemaError(saleItemsResult.error)) {
-    console.error('[Supabase fetchInventoryData] sale_items select failed:', saleItemsResult.error)
-    throw new Error(saleItemsResult.error.message || 'No se pudieron cargar ventas por codigo.')
+    logSupabaseError('[Supabase fetchInventoryData] sale_items select failed:', saleItemsResult.error)
+    throw new Error(friendlySupabaseMessage(saleItemsResult.error) || 'No se pudieron cargar ventas por codigo.')
   }
 
   return {
@@ -238,7 +267,7 @@ export async function saveExpense(expense) {
   const result = await insertWithCompatibleColumns('expenses', payload, ['payment_method', 'city'])
 
   if (result.error) {
-    console.error('[Supabase saveExpense] insert failed:', result.error, payload)
+    logSupabaseError('[Supabase saveExpense] insert failed:', result.error, payload)
     throw new Error(buildSupabaseModuleError(result.error, 'gastos'))
   }
 
@@ -268,7 +297,7 @@ export async function saveCashCut(cut) {
   const result = await insertWithCompatibleColumns('cash_cuts', payload, optionalColumns)
 
   if (result.error) {
-    console.error('[Supabase saveCashCut] insert failed:', result.error, payload)
+    logSupabaseError('[Supabase saveCashCut] insert failed:', result.error, payload)
     throw new Error(buildSupabaseModuleError(result.error, 'corte de caja'))
   }
 
@@ -291,7 +320,7 @@ export async function savePurchaseLot(lot) {
   const result = await insertWithCompatibleColumns('purchase_lots', payload, OPTIONAL_PURCHASE_LOT_COLUMNS)
 
   if (result.error) {
-    console.error('[Supabase savePurchaseLot] insert failed:', result.error, payload)
+    logSupabaseError('[Supabase savePurchaseLot] insert failed:', result.error, payload)
     throw new Error(buildSupabaseModuleError(result.error, 'lote de compra'))
   }
 
@@ -331,7 +360,7 @@ export async function savePurchaseLotItem(item) {
   const result = await insertWithCompatibleColumns('purchase_lot_items', payload, OPTIONAL_PURCHASE_ITEM_COLUMNS)
 
   if (result.error) {
-    console.error('[Supabase savePurchaseLotItem] insert failed:', result.error, payload)
+    logSupabaseError('[Supabase savePurchaseLotItem] insert failed:', result.error, payload)
     throw new Error(buildSupabaseModuleError(result.error, 'articulo de lote'))
   }
 
@@ -389,6 +418,13 @@ async function insertSaleWithCompatibleColumns(payload) {
       }
     }
 
+    if (isNetworkError(error)) {
+      return {
+        localFallback: true,
+        reason: offlineReason()
+      }
+    }
+
     const missingColumn = OPTIONAL_SALE_COLUMNS.find((column) => mentionsColumn(error, column))
 
     if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
@@ -421,7 +457,7 @@ async function insertSaleItemsWithCompatibleColumns(items) {
     const missingColumn = OPTIONAL_SALE_ITEM_COLUMNS.find((column) => mentionsColumn(error, column))
 
     if (missingColumn) {
-      console.error('[Supabase sale_items] retry without missing column:', missingColumn, error)
+      logSupabaseError('[Supabase sale_items] retry without missing column:', missingColumn, error)
       nextItems = nextItems.map((item) => {
         const nextItem = { ...item }
         delete nextItem[missingColumn]
@@ -455,7 +491,7 @@ async function insertWithCompatibleColumns(tableName, payload, optionalColumns) 
     const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
 
     if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
-      console.error(`[Supabase ${tableName}] retry without missing column:`, missingColumn, error)
+      logSupabaseError(`[Supabase ${tableName}] retry without missing column:`, missingColumn, error)
       nextPayload = { ...nextPayload }
       delete nextPayload[missingColumn]
       continue
@@ -488,7 +524,7 @@ async function ensureProductCode(item) {
     .maybeSingle()
 
   if (selectError && !isMissingSchemaError(selectError)) {
-    console.error('[Supabase ensureProductCode] select failed:', selectError, payload)
+    logSupabaseError('[Supabase ensureProductCode] select failed:', selectError, payload)
     throw new Error(buildSupabaseModuleError(selectError, 'codigo de producto'))
   }
 
@@ -501,7 +537,7 @@ async function ensureProductCode(item) {
       .single()
 
     if (updateError && !isMissingSchemaError(updateError)) {
-      console.error('[Supabase ensureProductCode] update failed:', updateError, payload)
+      logSupabaseError('[Supabase ensureProductCode] update failed:', updateError, payload)
       throw new Error(buildSupabaseModuleError(updateError, 'codigo de producto'))
     }
 
@@ -511,7 +547,7 @@ async function ensureProductCode(item) {
   const result = await insertWithCompatibleColumns('product_codes', payload, ['unit_cost', 'suggested_price'])
 
   if (result.error) {
-    console.error('[Supabase ensureProductCode] insert failed:', result.error, payload)
+    logSupabaseError('[Supabase ensureProductCode] insert failed:', result.error, payload)
     throw new Error(buildSupabaseModuleError(result.error, 'codigo de producto'))
   }
 
@@ -534,7 +570,7 @@ async function updateProductCodeInventoryLink(productCodeId, lotItem) {
     .eq('id', productCodeId)
 
   if (error && !isMissingSchemaError(error)) {
-    console.error('[Supabase updateProductCodeInventoryLink] update failed:', error, payload)
+    logSupabaseError('[Supabase updateProductCodeInventoryLink] update failed:', error, payload)
   }
 }
 
@@ -549,7 +585,7 @@ async function relateSaleItemsToInventory(savedItems) {
     .in('code', codes)
 
   if (error) {
-    console.error('[Supabase relateSaleItemsToInventory] product_codes lookup failed:', error, codes)
+    logSupabaseError('[Supabase relateSaleItemsToInventory] product_codes lookup failed:', error, codes)
     return
   }
 
@@ -562,7 +598,7 @@ async function relateSaleItemsToInventory(savedItems) {
     .in('product_code_id', productCodeIds)
 
   if (lotItemsError && !isMissingSchemaError(lotItemsError)) {
-    console.error('[Supabase relateSaleItemsToInventory] lot item lookup by product_code_id failed:', lotItemsError)
+    logSupabaseError('[Supabase relateSaleItemsToInventory] lot item lookup by product_code_id failed:', lotItemsError)
   }
 
   for (const saleItem of codedItems) {
@@ -588,7 +624,7 @@ async function relateSaleItemsToInventory(savedItems) {
       .eq('id', saleItem.id)
 
     if (updateError) {
-      console.error('[Supabase relateSaleItemsToInventory] sale_item relation update failed:', updateError, updatePayload)
+      logSupabaseError('[Supabase relateSaleItemsToInventory] sale_item relation update failed:', updateError, updatePayload)
       if (!isMissingSchemaError(updateError)) return
     }
   }
@@ -648,12 +684,42 @@ function normalizeCode(code) {
   return String(code || '').trim().toUpperCase()
 }
 
+function buildAdminDataReason(expensesError, cashCutsError) {
+  if (isNetworkError(expensesError) || isNetworkError(cashCutsError)) return offlineReason()
+  if (expensesError || cashCutsError) return 'Faltan tablas de gastos/cortes. Ejecuta el ALTER puntual de Supabase.'
+  return ''
+}
+
+function offlineReason() {
+  return 'Sin conexion con Supabase. Revisa internet; las ventas pueden quedar en modo local.'
+}
+
+function friendlySupabaseMessage(error) {
+  if (isNetworkError(error)) return offlineReason()
+  return error?.message || ''
+}
+
+function isNetworkError(error) {
+  const text = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase()
+  return text.includes('fetch failed') || text.includes('network') || text.includes('failed to fetch') || text.includes('load failed')
+}
+
+function logSupabaseError(...args) {
+  if (import.meta.env.DEV) {
+    console.warn(...args)
+  }
+}
+
 function buildSupabaseModuleError(error, moduleName) {
+  if (isNetworkError(error)) {
+    return `${offlineReason()} No se pudo guardar ${moduleName} en Supabase.`
+  }
+
   if (isMissingSchemaError(error)) {
     return `No se pudo guardar ${moduleName}: falta la tabla o columnas necesarias. Ejecuta el ALTER puntual de Supabase.`
   }
 
-  return error.message || `No se pudo guardar ${moduleName}.`
+  return friendlySupabaseMessage(error) || `No se pudo guardar ${moduleName}.`
 }
 
 function isMissingSchemaError(error) {

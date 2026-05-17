@@ -87,20 +87,11 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     }
   }, [eventCity, isSuperAdmin, isInvestor])
 
-  useEffect(() => {
-    if (!inventory.lots.length) {
-      if (selectedLotId) setSelectedLotId('')
-      return
-    }
-
-    if (!selectedLotId || !inventory.lots.some((lot) => lot.id === selectedLotId)) {
-      setSelectedLotId(inventory.lots[0].id)
-    }
-  }, [inventory.lots, selectedLotId])
 
   const metrics = useMemo(() => buildMetrics(summary.sales, summary.expenses, summary.cashCuts), [summary.sales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const visibleTickets = useMemo(() => filterTickets(summary.sales, ticketSearch), [summary.sales, ticketSearch])
+  const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
   const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
   const cityLabel = effectiveCity || 'Todas las ciudades'
   const eventLabel = effectiveCity ? `Evento activo: ${effectiveCity}` : 'Vista general del dia'
@@ -192,7 +183,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
   async function handleSaveLotItem() {
     if (!canManageOps || savingLotItem) return
-    if (!selectedLotId) {
+    if (!activeLotId) {
       setError('Primero crea o selecciona un lote.')
       return
     }
@@ -208,7 +199,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
     try {
       await savePurchaseLotItem({
-        lotId: selectedLotId,
+        lotId: activeLotId,
         code: lotItemForm.code,
         category: lotItemForm.category,
         material: lotItemForm.material,
@@ -335,7 +326,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
                 <section style={styles.cleanSection}>
                   <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Articulos del lote</h2></div>
-                  <select value={selectedLotId} onChange={(event) => setSelectedLotId(event.target.value)} style={styles.input}>
+                  <select value={activeLotId} onChange={(event) => setSelectedLotId(event.target.value)} style={styles.input}>
                     {inventory.lots.length === 0 ? <option value="">Sin lotes</option> : inventory.lots.map((lot) => <option key={lot.id} value={lot.id}>{lotLabel(lot)}</option>)}
                   </select>
                   <input value={lotItemForm.code} onChange={(event) => setLotItemForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="Codigo" style={styles.input} />
@@ -348,7 +339,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                     <input value={lotItemForm.unitCost} onChange={(event) => setLotItemForm((current) => ({ ...current, unitCost: event.target.value }))} placeholder="Costo" inputMode="decimal" type="number" min="0" style={styles.input} />
                     <input value={lotItemForm.suggestedPrice} onChange={(event) => setLotItemForm((current) => ({ ...current, suggestedPrice: event.target.value }))} placeholder="Precio" inputMode="decimal" type="number" min="0" style={styles.input} />
                   </div>
-                  <button type="button" style={styles.primaryButton} disabled={savingLotItem || !selectedLotId} onClick={handleSaveLotItem}>{savingLotItem ? 'Guardando...' : 'Agregar articulo'}</button>
+                  <button type="button" style={styles.primaryButton} disabled={savingLotItem || !activeLotId} onClick={handleSaveLotItem}>{savingLotItem ? 'Guardando...' : 'Agregar articulo'}</button>
                 </section>
 
                 <section style={styles.cleanSection}>

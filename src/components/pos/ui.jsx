@@ -127,10 +127,10 @@ export function ChoiceButton({ active,children,onClick }) {
   )
 }
 
-export const SUCCESS = '#10B981'
-export const SUCCESS_SOFT = '#DFF8EC'
-export const SUCCESS_SHADOW = 'rgba(16,185,129,0.22)'
+const SUCCESS = '#10B981'
+const SUCCESS_SHADOW = 'rgba(16,185,129,0.22)'
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const styles = {
   page: {
     minHeight: '100dvh',

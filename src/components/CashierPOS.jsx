@@ -51,7 +51,7 @@ const SCANNER_EXAMPLES = [
 ]
 
 function CashierPOS({ user, onLogout, onOpenAdmin }) {
-  const draft = useMemo(readDraft, [])
+  const draft = useMemo(() => readDraft(), [])
   const [screen, setScreen] = useState(draft.activeCity ? 'cashier' : 'city')
   const [cityInput, setCityInput] = useState(draft.activeCity || '')
   const [activeCity, setActiveCity] = useState(draft.activeCity || '')
