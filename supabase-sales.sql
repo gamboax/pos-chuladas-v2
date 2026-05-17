@@ -1,4 +1,4 @@
-﻿create extension if not exists pgcrypto;
+create extension if not exists pgcrypto;
 
 create table if not exists public.cities (
   id uuid primary key default gen_random_uuid(),
@@ -87,6 +87,8 @@ alter table public.cash_cuts add column if not exists cash_expenses numeric(12, 
 alter table public.cash_cuts add column if not exists difference numeric(12, 2) not null default 0;
 alter table public.cash_cuts add column if not exists notes text;
 
+alter table public.sales add column if not exists discount numeric(12, 2) not null default 0;
+
 create table if not exists public.purchase_lots (
   id uuid primary key default gen_random_uuid(),
   name text,
@@ -110,6 +112,7 @@ alter table public.purchase_lots add column if not exists notes text;
 create table if not exists public.purchase_lot_items (
   id uuid primary key default gen_random_uuid(),
   lot_id uuid references public.purchase_lots(id) on delete cascade,
+  product_code_id uuid,
   code text,
   category text,
   material text,
@@ -120,6 +123,7 @@ create table if not exists public.purchase_lot_items (
   created_at timestamptz not null default now()
 );
 
+alter table public.purchase_lot_items add column if not exists product_code_id uuid;
 alter table public.purchase_lot_items add column if not exists code text;
 alter table public.purchase_lot_items add column if not exists category text;
 alter table public.purchase_lot_items add column if not exists material text;
@@ -142,6 +146,9 @@ create table if not exists public.product_codes (
 
 alter table public.sale_items add column if not exists purchase_lot_item_id uuid references public.purchase_lot_items(id) on delete set null;
 alter table public.sale_items add column if not exists product_code_id uuid references public.product_codes(id) on delete set null;
+alter table public.sale_items add column if not exists line_total numeric(12, 2) not null default 0;
+alter table public.sale_items add column if not exists unit_cost numeric(12, 2) not null default 0;
+alter table public.sale_items add column if not exists estimated_profit numeric(12, 2) not null default 0;
 
 create index if not exists sales_folio_idx on public.sales (folio);
 create index if not exists sales_city_created_at_idx on public.sales (city, created_at desc);
@@ -156,6 +163,7 @@ create index if not exists cash_cuts_city_created_at_idx on public.cash_cuts (ci
 create index if not exists purchase_lots_created_at_idx on public.purchase_lots (created_at desc);
 create index if not exists purchase_lot_items_lot_id_idx on public.purchase_lot_items (lot_id);
 create index if not exists purchase_lot_items_code_idx on public.purchase_lot_items (code);
+create index if not exists purchase_lot_items_product_code_idx on public.purchase_lot_items (product_code_id);
 create index if not exists product_codes_code_idx on public.product_codes (code);
 create index if not exists product_codes_lot_item_idx on public.product_codes (purchase_lot_item_id);
 
@@ -305,5 +313,5 @@ grant select, insert, update on public.sale_items to anon, authenticated;
 grant select, insert on public.expenses to anon, authenticated;
 grant select, insert on public.cash_cuts to anon, authenticated;
 grant select, insert on public.purchase_lots to anon, authenticated;
-grant select, insert on public.purchase_lot_items to anon, authenticated;
+grant select, insert, update on public.purchase_lot_items to anon, authenticated;
 grant select, insert, update on public.product_codes to anon, authenticated;
