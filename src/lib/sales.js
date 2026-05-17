@@ -3,6 +3,8 @@
 const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
 const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status']
+const OPTIONAL_PURCHASE_LOT_COLUMNS = ['name', 'purchase_place', 'purchase_date', 'total_investment', 'notes', 'total_cost']
+const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['code', 'quantity_purchased', 'quantity', 'suggested_price']
 
 export async function saveSale(sale) {
   if (!hasSupabaseConfig || !supabase) {
@@ -32,7 +34,10 @@ export async function saveSale(sale) {
     capture_origin: item.capture_origin || 'manual'
   }))
 
-  const { error: itemsError } = await supabase.from('sale_items').insert(saleItems)
+  const { data: savedItems, error: itemsError } = await supabase
+    .from('sale_items')
+    .insert(saleItems)
+    .select('id, code_detected')
 
   if (itemsError) {
     if (isMissingSchemaError(itemsError)) {
@@ -41,6 +46,8 @@ export async function saveSale(sale) {
 
     throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${itemsError.message}`)
   }
+
+  await relateSaleItemsToInventory(savedItems || [])
 
   return {
     id: savedSale.id,
@@ -127,6 +134,70 @@ export async function fetchTodayAdminData() {
   }
 }
 
+export async function fetchInventoryData() {
+  if (!hasSupabaseConfig || !supabase) {
+    return {
+      storage: 'local',
+      reason: 'Supabase no esta configurado para inventario.',
+      lots: [],
+      lotItems: [],
+      productCodes: [],
+      saleItems: []
+    }
+  }
+
+  const [lotsResult, lotItemsResult, codesResult, saleItemsResult] = await Promise.all([
+    supabase
+      .from('purchase_lots')
+      .select('*')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('purchase_lot_items')
+      .select('*')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('product_codes')
+      .select('*'),
+    supabase
+      .from('sale_items')
+      .select('id, quantity, unit_price, subtotal, code_detected, created_at')
+      .not('code_detected', 'is', null)
+  ])
+
+  if (lotsResult.error || lotItemsResult.error) {
+    const error = lotsResult.error || lotItemsResult.error
+    if (isMissingSchemaError(error)) {
+      return {
+        storage: 'supabase',
+        reason: 'Faltan tablas de inventario. Ejecuta supabase-sales.sql.',
+        lots: [],
+        lotItems: [],
+        productCodes: [],
+        saleItems: []
+      }
+    }
+
+    throw new Error(error.message || 'No se pudo cargar inventario.')
+  }
+
+  if (codesResult.error && !isMissingSchemaError(codesResult.error)) {
+    throw new Error(codesResult.error.message || 'No se pudieron cargar codigos de producto.')
+  }
+
+  if (saleItemsResult.error && !isMissingSchemaError(saleItemsResult.error)) {
+    throw new Error(saleItemsResult.error.message || 'No se pudieron cargar ventas por codigo.')
+  }
+
+  return {
+    storage: 'supabase',
+    reason: codesResult.error || saleItemsResult.error ? 'Faltan columnas/codigos de inventario. Ejecuta supabase-sales.sql.' : '',
+    lots: lotsResult.data || [],
+    lotItems: lotItemsResult.data || [],
+    productCodes: codesResult.error ? [] : codesResult.data || [],
+    saleItems: saleItemsResult.error ? [] : saleItemsResult.data || []
+  }
+}
+
 export async function saveExpense(expense) {
   requireSupabase('guardar gastos')
 
@@ -178,6 +249,52 @@ export async function saveCashCut(cut) {
   }
 
   return data
+}
+
+export async function savePurchaseLot(lot) {
+  requireSupabase('guardar lotes de compra')
+
+  const payload = {
+    name: lot.name || null,
+    supplier: lot.supplier || null,
+    purchase_place: lot.purchasePlace || null,
+    purchase_date: lot.purchaseDate || null,
+    total_investment: Number(lot.totalInvestment || 0),
+    total_cost: Number(lot.totalInvestment || 0),
+    notes: lot.notes || null
+  }
+
+  const result = await insertWithCompatibleColumns('purchase_lots', payload, OPTIONAL_PURCHASE_LOT_COLUMNS)
+
+  if (result.error) {
+    throw new Error(buildSupabaseModuleError(result.error, 'lote de compra'))
+  }
+
+  return result.data
+}
+
+export async function savePurchaseLotItem(item) {
+  requireSupabase('guardar articulos de lote')
+
+  const payload = {
+    lot_id: item.lotId,
+    code: String(item.code || '').trim().toUpperCase(),
+    category: item.category,
+    material: item.material,
+    quantity_purchased: Number(item.quantityPurchased || 0),
+    quantity: Number(item.quantityPurchased || 0),
+    unit_cost: Number(item.unitCost || 0),
+    suggested_price: Number(item.suggestedPrice || 0)
+  }
+
+  const result = await insertWithCompatibleColumns('purchase_lot_items', payload, OPTIONAL_PURCHASE_ITEM_COLUMNS)
+
+  if (result.error) {
+    throw new Error(buildSupabaseModuleError(result.error, 'articulo de lote'))
+  }
+
+  await upsertProductCode(result.data)
+  return result.data
 }
 
 function requireSupabase(action) {
@@ -238,6 +355,89 @@ async function insertSaleWithCompatibleColumns(payload) {
 
   return {
     error: new Error('No se pudo adaptar el guardado a las columnas disponibles en sales.')
+  }
+}
+
+async function insertWithCompatibleColumns(tableName, payload, optionalColumns) {
+  let nextPayload = { ...payload }
+
+  for (let attempt = 0; attempt <= optionalColumns.length; attempt += 1) {
+    const { data, error } = await supabase
+      .from(tableName)
+      .insert(nextPayload)
+      .select('*')
+      .single()
+
+    if (!error) {
+      return { data }
+    }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+
+    if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
+      nextPayload = { ...nextPayload }
+      delete nextPayload[missingColumn]
+      continue
+    }
+
+    return { error }
+  }
+
+  return {
+    error: new Error(`No se pudo adaptar el guardado a las columnas disponibles en ${tableName}.`)
+  }
+}
+
+async function upsertProductCode(lotItem) {
+  if (!lotItem?.code) return
+
+  const payload = {
+    code: String(lotItem.code).trim().toUpperCase(),
+    purchase_lot_item_id: lotItem.id,
+    purchase_lot_id: lotItem.lot_id || null,
+    category: lotItem.category || null,
+    material: lotItem.material || null,
+    unit_cost: Number(lotItem.unit_cost || 0),
+    suggested_price: Number(lotItem.suggested_price || 0)
+  }
+
+  const { error } = await supabase
+    .from('product_codes')
+    .upsert(payload, { onConflict: 'code' })
+
+  if (error && !isMissingSchemaError(error)) {
+    throw new Error(buildSupabaseModuleError(error, 'codigo de producto'))
+  }
+}
+
+async function relateSaleItemsToInventory(savedItems) {
+  const codedItems = savedItems.filter((item) => item.code_detected)
+  if (!codedItems.length || !supabase) return
+
+  const codes = [...new Set(codedItems.map((item) => String(item.code_detected).trim().toUpperCase()))]
+  const { data: productCodes, error } = await supabase
+    .from('product_codes')
+    .select('id, code, purchase_lot_item_id')
+    .in('code', codes)
+
+  if (error || !productCodes?.length) return
+
+  for (const saleItem of codedItems) {
+    const code = String(saleItem.code_detected).trim().toUpperCase()
+    const productCode = productCodes.find((row) => row.code === code)
+    if (!productCode) continue
+
+    const { error: updateError } = await supabase
+      .from('sale_items')
+      .update({
+        product_code_id: productCode.id,
+        purchase_lot_item_id: productCode.purchase_lot_item_id || null
+      })
+      .eq('id', saleItem.id)
+
+    if (updateError && !isMissingSchemaError(updateError)) {
+      return
+    }
   }
 }
 

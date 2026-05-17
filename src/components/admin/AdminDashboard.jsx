@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import { fetchTodayAdminData, saveCashCut, saveExpense } from '../../lib/sales'
+﻿import { useEffect, useMemo, useState } from 'react'
+import {
+  fetchInventoryData,
+  fetchTodayAdminData,
+  saveCashCut,
+  saveExpense,
+  savePurchaseLot,
+  savePurchaseLotItem
+} from '../../lib/sales'
 import { money } from '../../lib/ticket'
 
 const EXPENSE_CATEGORIES = [
@@ -10,20 +17,43 @@ const EXPENSE_CATEGORIES = [
   'Hotel',
   'Ayudantes',
   'Lugar/Renta',
-  'Mercancía',
+  'Mercancia',
   'Otros'
 ]
+
+const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete']
+const MATERIALS = ['Acero inoxidable', 'Oro laminado', 'Bano de rodio', 'Bano de plata']
 
 function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const defaultCity = readActiveCityDraft()
   const [summary, setSummary] = useState({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
+  const [inventory, setInventory] = useState({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
   const [eventCity, setEventCity] = useState(defaultCity)
   const [expenseForm, setExpenseForm] = useState({ category: EXPENSE_CATEGORIES[0], description: '', amount: '' })
   const [cashCounted, setCashCounted] = useState('')
   const [cashCutNotes, setCashCutNotes] = useState('')
+  const [lotForm, setLotForm] = useState({
+    name: '',
+    supplier: '',
+    purchasePlace: '',
+    purchaseDate: todayInputValue(),
+    totalInvestment: '',
+    notes: ''
+  })
+  const [selectedLotId, setSelectedLotId] = useState('')
+  const [lotItemForm, setLotItemForm] = useState({
+    code: '',
+    category: PRODUCT_CATEGORIES[0],
+    material: MATERIALS[0],
+    quantityPurchased: '',
+    unitCost: '',
+    suggestedPrice: ''
+  })
   const [loading, setLoading] = useState(true)
   const [savingExpense, setSavingExpense] = useState(false)
   const [savingCashCut, setSavingCashCut] = useState(false)
+  const [savingLot, setSavingLot] = useState(false)
+  const [savingLotItem, setSavingLotItem] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -32,8 +62,9 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     setError('')
 
     try {
-      const result = await fetchTodayAdminData()
-      setSummary(result)
+      const [adminResult, inventoryResult] = await Promise.all([fetchTodayAdminData(), fetchInventoryData()])
+      setSummary(adminResult)
+      setInventory(inventoryResult)
     } catch (loadError) {
       setError(loadError.message || 'No se pudo cargar el dashboard.')
     } finally {
@@ -49,8 +80,11 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError('')
 
       try {
-        const result = await fetchTodayAdminData()
-        if (alive) setSummary(result)
+        const [adminResult, inventoryResult] = await Promise.all([fetchTodayAdminData(), fetchInventoryData()])
+        if (alive) {
+          setSummary(adminResult)
+          setInventory(inventoryResult)
+        }
       } catch (loadError) {
         if (alive) setError(loadError.message || 'No se pudo cargar el dashboard.')
       } finally {
@@ -65,7 +99,19 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     }
   }, [])
 
+  useEffect(() => {
+    if (!inventory.lots.length) {
+      if (selectedLotId) setSelectedLotId('')
+      return
+    }
+
+    if (!selectedLotId || !inventory.lots.some((lot) => lot.id === selectedLotId)) {
+      setSelectedLotId(inventory.lots[0].id)
+    }
+  }, [inventory.lots, selectedLotId])
+
   const metrics = useMemo(() => buildMetrics(summary.sales, summary.expenses, summary.cashCuts), [summary.sales, summary.expenses, summary.cashCuts])
+  const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const effectiveCity = eventCity.trim() || defaultCity || 'Evento'
   const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
 
@@ -129,6 +175,80 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     }
   }
 
+  async function handleSaveLot() {
+    if (savingLot) return
+    if (!lotForm.name.trim() || Number(lotForm.totalInvestment) < 0) {
+      setError('Completa nombre de lote e inversion valida.')
+      return
+    }
+
+    setSavingLot(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const savedLot = await savePurchaseLot({
+        name: lotForm.name.trim(),
+        supplier: lotForm.supplier.trim(),
+        purchasePlace: lotForm.purchasePlace.trim(),
+        purchaseDate: lotForm.purchaseDate,
+        totalInvestment: Number(lotForm.totalInvestment || 0),
+        notes: lotForm.notes.trim()
+      })
+      setSelectedLotId(savedLot.id)
+      setLotForm({ name: '', supplier: '', purchasePlace: '', purchaseDate: todayInputValue(), totalInvestment: '', notes: '' })
+      setNotice('Lote guardado.')
+      await loadDashboard()
+    } catch (saveError) {
+      setError(saveError.message || 'No se pudo guardar el lote.')
+    } finally {
+      setSavingLot(false)
+    }
+  }
+
+  async function handleSaveLotItem() {
+    if (savingLotItem) return
+    if (!selectedLotId) {
+      setError('Primero crea o selecciona un lote.')
+      return
+    }
+
+    if (!lotItemForm.code.trim() || Number(lotItemForm.quantityPurchased) <= 0) {
+      setError('Completa codigo y cantidad comprada.')
+      return
+    }
+
+    setSavingLotItem(true)
+    setError('')
+    setNotice('')
+
+    try {
+      await savePurchaseLotItem({
+        lotId: selectedLotId,
+        code: lotItemForm.code,
+        category: lotItemForm.category,
+        material: lotItemForm.material,
+        quantityPurchased: Number(lotItemForm.quantityPurchased || 0),
+        unitCost: Number(lotItemForm.unitCost || 0),
+        suggestedPrice: Number(lotItemForm.suggestedPrice || 0)
+      })
+      setLotItemForm({
+        code: '',
+        category: PRODUCT_CATEGORIES[0],
+        material: MATERIALS[0],
+        quantityPurchased: '',
+        unitCost: '',
+        suggestedPrice: ''
+      })
+      setNotice('Articulo agregado al lote.')
+      await loadDashboard()
+    } catch (saveError) {
+      setError(saveError.message || 'No se pudo guardar el articulo.')
+    } finally {
+      setSavingLotItem(false)
+    }
+  }
+
   return (
     <main style={styles.page}>
       <div style={styles.shell}>
@@ -150,13 +270,14 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               <p style={styles.copy}>{metrics.salesCount} venta(s) / Ticket promedio {money(metrics.averageTicket)}</p>
             </div>
 
-            {loading && <div style={styles.notice}>Cargando ventas...</div>}
+            {loading && <div style={styles.notice}>Cargando datos...</div>}
             {notice && <div style={styles.notice}>{notice}</div>}
             {error && <div style={styles.error}>{error}</div>}
             {summary.storage === 'local' && !loading && (
               <div style={styles.notice}>{summary.reason || 'Mostrando ventas locales de este navegador.'}</div>
             )}
             {summary.reason && summary.storage === 'supabase' && !loading && <div style={styles.notice}>{summary.reason}</div>}
+            {inventory.reason && !loading && <div style={styles.notice}>{inventory.reason}</div>}
 
             <label style={styles.labelBlock}>
               Ciudad / evento
@@ -170,6 +291,10 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               <Metric label="Utilidad estimada" value={money(metrics.estimatedProfit)} />
               <Metric label="Ticket promedio" value={money(metrics.averageTicket)} />
               <Metric label="Diferencia caja" value={money(metrics.latestDifference)} />
+              <Metric label="Inversion total" value={money(inventoryMetrics.totalInvestment)} />
+              <Metric label="ROI basico" value={`${inventoryMetrics.roi.toFixed(1)}%`} />
+              <Metric label="Ventas/inversion" value={`${inventoryMetrics.salesVsInvestment.toFixed(1)}%`} />
+              <Metric label="Utilidad real est." value={money(inventoryMetrics.operatingProfit)} />
             </div>
 
             <div style={styles.listBlock}>
@@ -185,6 +310,149 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 ))
               )}
             </div>
+
+            <section style={styles.moduleBlock}>
+              <h2 style={styles.sectionTitle}>Inventario basico</h2>
+              <ReadOnlyLine label="Cantidad comprada" value={inventoryMetrics.quantityPurchased} />
+              <ReadOnlyLine label="Cantidad vendida" value={inventoryMetrics.quantitySold} />
+              <ReadOnlyLine label="Restante estimado" value={inventoryMetrics.remainingEstimated} strong />
+              <ReadOnlyLine label="Ingreso estimado" value={money(inventoryMetrics.estimatedRevenue)} />
+              <ReadOnlyLine label="Utilidad estimada" value={money(inventoryMetrics.estimatedProfit)} strong />
+              <div style={styles.compactList}>
+                {inventory.lotItems.length === 0 ? (
+                  <div style={styles.empty}>Aun no hay articulos de lote.</div>
+                ) : (
+                  inventory.lotItems.slice(0, 5).map((item) => (
+                    <div key={item.id} style={styles.inventoryRow}>
+                      <div>
+                        <strong>{item.code || 'Sin codigo'}</strong>
+                        <span>{item.category || 'Articulo'} / {item.material || 'Sin material'}</span>
+                      </div>
+                      <strong>{quantityPurchasedOf(item)} pza</strong>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section style={styles.moduleBlock}>
+              <h2 style={styles.sectionTitle}>Nuevo lote</h2>
+              <input
+                value={lotForm.name}
+                onChange={(event) => setLotForm((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Nombre lote"
+                style={styles.input}
+              />
+              <input
+                value={lotForm.supplier}
+                onChange={(event) => setLotForm((current) => ({ ...current, supplier: event.target.value }))}
+                placeholder="Proveedor"
+                style={styles.input}
+              />
+              <input
+                value={lotForm.purchasePlace}
+                onChange={(event) => setLotForm((current) => ({ ...current, purchasePlace: event.target.value }))}
+                placeholder="Lugar compra"
+                style={styles.input}
+              />
+              <div style={styles.twoColumns}>
+                <input
+                  value={lotForm.purchaseDate}
+                  onChange={(event) => setLotForm((current) => ({ ...current, purchaseDate: event.target.value }))}
+                  type="date"
+                  style={styles.input}
+                />
+                <input
+                  value={lotForm.totalInvestment}
+                  onChange={(event) => setLotForm((current) => ({ ...current, totalInvestment: event.target.value }))}
+                  placeholder="Inversion"
+                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  style={styles.input}
+                />
+              </div>
+              <textarea
+                value={lotForm.notes}
+                onChange={(event) => setLotForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="Notas"
+                style={styles.textarea}
+              />
+              <button type="button" style={styles.primaryButton} disabled={savingLot} onClick={handleSaveLot}>
+                {savingLot ? 'Guardando...' : 'Guardar lote'}
+              </button>
+            </section>
+
+            <section style={styles.moduleBlock}>
+              <h2 style={styles.sectionTitle}>Articulos del lote</h2>
+              <select value={selectedLotId} onChange={(event) => setSelectedLotId(event.target.value)} style={styles.input}>
+                {inventory.lots.length === 0 ? (
+                  <option value="">Sin lotes</option>
+                ) : (
+                  inventory.lots.map((lot) => (
+                    <option key={lot.id} value={lot.id}>{lotLabel(lot)}</option>
+                  ))
+                )}
+              </select>
+              <input
+                value={lotItemForm.code}
+                onChange={(event) => setLotItemForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
+                placeholder="Codigo"
+                style={styles.input}
+              />
+              <div style={styles.twoColumns}>
+                <select
+                  value={lotItemForm.category}
+                  onChange={(event) => setLotItemForm((current) => ({ ...current, category: event.target.value }))}
+                  style={styles.input}
+                >
+                  {PRODUCT_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+                <select
+                  value={lotItemForm.material}
+                  onChange={(event) => setLotItemForm((current) => ({ ...current, material: event.target.value }))}
+                  style={styles.input}
+                >
+                  {MATERIALS.map((material) => (
+                    <option key={material} value={material}>{material}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={styles.threeColumns}>
+                <input
+                  value={lotItemForm.quantityPurchased}
+                  onChange={(event) => setLotItemForm((current) => ({ ...current, quantityPurchased: event.target.value }))}
+                  placeholder="Cant."
+                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  style={styles.input}
+                />
+                <input
+                  value={lotItemForm.unitCost}
+                  onChange={(event) => setLotItemForm((current) => ({ ...current, unitCost: event.target.value }))}
+                  placeholder="Costo"
+                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  style={styles.input}
+                />
+                <input
+                  value={lotItemForm.suggestedPrice}
+                  onChange={(event) => setLotItemForm((current) => ({ ...current, suggestedPrice: event.target.value }))}
+                  placeholder="Precio"
+                  inputMode="decimal"
+                  type="number"
+                  min="0"
+                  style={styles.input}
+                />
+              </div>
+              <button type="button" style={styles.primaryButton} disabled={savingLotItem || !selectedLotId} onClick={handleSaveLotItem}>
+                {savingLotItem ? 'Guardando...' : 'Agregar articulo'}
+              </button>
+            </section>
 
             <section style={styles.moduleBlock}>
               <h2 style={styles.sectionTitle}>Gastos del evento</h2>
@@ -246,7 +514,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 value={cashCutNotes}
                 onChange={(event) => setCashCutNotes(event.target.value)}
                 placeholder="Notas del corte"
-                style={{ ...styles.input, minHeight: 86, paddingTop: 12, resize: 'vertical' }}
+                style={styles.textarea}
               />
               <button type="button" style={styles.primaryButton} disabled={savingCashCut} onClick={handleSaveCashCut}>
                 {savingCashCut ? 'Guardando...' : 'Guardar corte'}
@@ -315,6 +583,90 @@ function buildMetrics(sales, expenses, cashCuts) {
     mixedTotal,
     latestDifference
   }
+}
+
+function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
+  const lotItems = inventory.lotItems || []
+  const productCodes = inventory.productCodes || []
+  const saleItems = inventory.saleItems || []
+
+  const itemById = new Map(lotItems.map((item) => [item.id, item]))
+  const itemByCode = new Map()
+  lotItems.forEach((item) => {
+    const code = normalizeCode(item.code)
+    if (code) itemByCode.set(code, item)
+  })
+
+  const codeByValue = new Map()
+  productCodes.forEach((row) => {
+    const code = normalizeCode(row.code)
+    if (code) codeByValue.set(code, row)
+  })
+
+  const quantityPurchased = lotItems.reduce((sum, item) => sum + quantityPurchasedOf(item), 0)
+  const itemCostTotal = lotItems.reduce((sum, item) => sum + quantityPurchasedOf(item) * Number(item.unit_cost || 0), 0)
+  const lotsInvestment = (inventory.lots || []).reduce((sum, lot) => sum + lotInvestmentOf(lot), 0)
+  const totalInvestment = lotsInvestment || itemCostTotal
+
+  let quantitySold = 0
+  let estimatedRevenue = 0
+  let actualRevenue = 0
+  let soldCost = 0
+
+  saleItems.forEach((saleItem) => {
+    const code = normalizeCode(saleItem.code_detected)
+    if (!code) return
+
+    const quantity = Number(saleItem.quantity || 0)
+    const codeRow = codeByValue.get(code)
+    const relatedItem = itemById.get(codeRow?.purchase_lot_item_id) || itemByCode.get(code)
+    const suggestedPrice = Number(relatedItem?.suggested_price || codeRow?.suggested_price || saleItem.unit_price || 0)
+    const unitCost = Number(relatedItem?.unit_cost || codeRow?.unit_cost || 0)
+    const subtotal = Number(saleItem.subtotal || quantity * Number(saleItem.unit_price || 0))
+
+    quantitySold += quantity
+    estimatedRevenue += quantity * suggestedPrice
+    actualRevenue += subtotal
+    soldCost += quantity * unitCost
+  })
+
+  const remainingEstimated = Math.max(quantityPurchased - quantitySold, 0)
+  const estimatedProfit = actualRevenue - soldCost
+  const operatingProfit = estimatedProfit - totalExpenses
+  const roi = totalInvestment > 0 ? (operatingProfit / totalInvestment) * 100 : 0
+  const salesVsInvestment = totalInvestment > 0 ? (totalSold / totalInvestment) * 100 : 0
+
+  return {
+    quantityPurchased,
+    quantitySold,
+    remainingEstimated,
+    estimatedRevenue: estimatedRevenue || actualRevenue,
+    estimatedProfit,
+    operatingProfit,
+    totalInvestment,
+    roi,
+    salesVsInvestment
+  }
+}
+
+function normalizeCode(code) {
+  return String(code || '').trim().toUpperCase()
+}
+
+function quantityPurchasedOf(item) {
+  return Number(item.quantity_purchased ?? item.quantity ?? 0)
+}
+
+function lotInvestmentOf(lot) {
+  return Number(lot.total_investment ?? lot.total_cost ?? 0)
+}
+
+function lotLabel(lot) {
+  return lot.name || lot.supplier || `Lote ${String(lot.id || '').slice(0, 8)}`
+}
+
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10)
 }
 
 function readActiveCityDraft() {
@@ -443,6 +795,14 @@ const styles = {
     borderTop: '1px solid #eeeeee',
     fontSize: 14
   },
+  inventoryRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 10,
+    padding: '10px 0',
+    borderTop: '1px solid #eeeeee',
+    fontSize: 14
+  },
   compactList: {
     display: 'grid',
     gap: 2
@@ -495,6 +855,29 @@ const styles = {
     fontWeight: 560,
     padding: '0 12px',
     boxSizing: 'border-box'
+  },
+  textarea: {
+    width: '100%',
+    minHeight: 86,
+    border: '1px solid #111111',
+    borderRadius: 18,
+    background: '#ffffff',
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: 560,
+    padding: '12px',
+    boxSizing: 'border-box',
+    resize: 'vertical'
+  },
+  twoColumns: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 8
+  },
+  threeColumns: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gap: 8
   },
   readOnlyLine: {
     display: 'flex',
