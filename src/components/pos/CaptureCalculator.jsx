@@ -106,21 +106,22 @@ function StepButton({ active, label, value, onClick }) {
 const styles = {
   panel: {
     background: '#ffffff',
-    border: '2px solid #111111',
+    border: '1px solid rgba(17, 17, 17, 0.84)',
     borderRadius: 28,
-    padding: 16,
-    boxShadow: '0 18px 34px rgba(17, 17, 17, 0.09)'
+    padding: 13,
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.075)',
+    boxSizing: 'border-box'
   },
   stack: {
     display: 'grid',
-    gap: 7
+    gap: 8
   },
   title: {
     margin: '2px 0 0',
     color: '#111111',
-    fontSize: 28,
+    fontSize: 27,
     lineHeight: 1,
-    fontWeight: 760,
+    fontWeight: 720,
     letterSpacing: 0
   },
   selectors: {
@@ -128,10 +129,10 @@ const styles = {
     gap: 7
   },
   stepButton: {
-    minHeight: 56,
+    minHeight: 52,
     border: 'none',
-    borderRadius: 18,
-    padding: '8px 14px',
+    borderRadius: 17,
+    padding: '8px 13px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -141,7 +142,7 @@ const styles = {
     fontWeight: 620
   },
   subtotalCard: {
-    minHeight: 52,
+    minHeight: 50,
     borderRadius: 20,
     background: '#10B981',
     color: '#ffffff',
@@ -163,7 +164,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'flex-end',
     padding: '0 20px',
-    fontSize: 29,
+    fontSize: 28,
     fontWeight: 760,
     overflow: 'hidden'
   },
@@ -173,9 +174,9 @@ const styles = {
     gap: 8
   },
   keyButton: {
-    minHeight: 54,
-    border: '1px solid #111111',
-    borderRadius: 20,
+    minHeight: 52,
+    border: '1px solid rgba(17, 17, 17, 0.86)',
+    borderRadius: 18,
     background: '#ffffff',
     color: '#111111',
     fontSize: 23,

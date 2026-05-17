@@ -133,19 +133,19 @@ export const SUCCESS_SHADOW = 'rgba(16, 185, 129, 0.22)'
 
 export const styles = {
   page: {
-    minHeight: '100svh',
+    minHeight: '100dvh',
     background: '#f4f4f4',
     color: '#111111',
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    padding: '18px 18px 22px',
+    padding: 'calc(19px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))',
     boxSizing: 'border-box',
     textAlign: 'left'
   },
   centeredPage: {
     display: 'grid',
     alignItems: 'center',
-    paddingTop: 28,
-    paddingBottom: 28
+    paddingTop: 'calc(42px + env(safe-area-inset-top))',
+    paddingBottom: 'calc(42px + env(safe-area-inset-bottom))'
   },
   shell: {
     width: '100%',
@@ -154,10 +154,10 @@ export const styles = {
   },
   panel: {
     background: '#ffffff',
-    border: '1px solid #111111',
+    border: '1px solid rgba(17, 17, 17, 0.8)',
     borderRadius: 28,
     padding: 18,
-    boxShadow: '0 16px 34px rgba(17, 17, 17, 0.08)',
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.06)',
     boxSizing: 'border-box'
   },
   stack: {
@@ -168,7 +168,7 @@ export const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 14,
+    marginBottom: 13,
     paddingTop: 2
   },
   backButton: {
@@ -183,7 +183,7 @@ export const styles = {
     transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   topTitle: {
-    fontSize: 21,
+    fontSize: 20,
     fontWeight: 730,
     lineHeight: 1.1
   },
@@ -202,9 +202,9 @@ export const styles = {
   title: {
     margin: '6px 0 4px',
     color: '#111111',
-    fontSize: 34,
+    fontSize: 33,
     lineHeight: 1,
-    fontWeight: 740,
+    fontWeight: 720,
     letterSpacing: 0
   },
   muted: {
@@ -215,7 +215,7 @@ export const styles = {
   },
   primaryButton: {
     width: '100%',
-    minHeight: 58,
+    minHeight: 57,
     border: 'none',
     borderRadius: 20,
     background: '#111111',
@@ -240,8 +240,8 @@ export const styles = {
   secondaryButton: {
     width: '100%',
     minHeight: 56,
-    border: '1px solid #111111',
-    borderRadius: 20,
+    border: '1px solid rgba(17, 17, 17, 0.86)',
+    borderRadius: 19,
     background: '#ffffff',
     color: '#111111',
     fontSize: 16,
@@ -327,7 +327,7 @@ export const styles = {
     gap: 8
   },
   summaryBox: {
-    border: '1px solid #111111',
+    border: '1px solid #d9d9d9',
     borderRadius: 22,
     background: '#ffffff',
     padding: 14,

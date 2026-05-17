@@ -109,8 +109,8 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
   return (
     <>
       <TopBar title="Escanear articulos" subtitle="Camara real / OCR pendiente" onBack={goBack} />
-      <Panel>
-        <Stack>
+      <Panel style={styles.panel}>
+        <Stack style={styles.stack}>
           <div style={styles.cameraBox}>
             {capturedImage ? (
               <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
@@ -183,25 +183,33 @@ function cameraErrorMessage(error) {
 }
 
 const styles = {
+  panel: {
+    padding: 16,
+    borderRadius: 28,
+    border: '1px solid rgba(17, 17, 17, 0.84)'
+  },
+  stack: {
+    gap: 13
+  },
   cameraBox: {
-    minHeight: 270,
-    border: '1px solid #111111',
-    borderRadius: 24,
+    minHeight: 242,
+    border: '1px solid rgba(17, 17, 17, 0.84)',
+    borderRadius: 23,
     background: '#111111',
     position: 'relative',
     overflow: 'hidden',
-    boxShadow: '0 14px 28px rgba(17, 17, 17, 0.14)'
+    boxShadow: '0 12px 24px rgba(17, 17, 17, 0.12)'
   },
   video: {
     width: '100%',
-    height: 270,
+    height: 242,
     display: 'block',
     objectFit: 'cover',
     background: '#111111'
   },
   previewImage: {
     width: '100%',
-    height: 270,
+    height: 242,
     display: 'block',
     objectFit: 'cover'
   },
@@ -222,7 +230,7 @@ const styles = {
     borderRadius: 20,
     background: '#DFF8EC',
     color: '#111111',
-    padding: 13,
+    padding: '12px 13px',
     display: 'grid',
     gap: 4,
     fontSize: 14,
@@ -235,7 +243,7 @@ const styles = {
   },
   cameraButton: {
     width: '100%',
-    minHeight: 58,
+    minHeight: 56,
     border: '1px solid #111111',
     borderRadius: 20,
     background: '#ffffff',
@@ -246,7 +254,7 @@ const styles = {
   },
   captureButton: {
     width: '100%',
-    minHeight: 58,
+    minHeight: 56,
     border: '1px solid #0EA371',
     borderRadius: 20,
     background: '#10B981',

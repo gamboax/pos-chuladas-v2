@@ -3,13 +3,13 @@ const baseHeader = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
-  marginBottom: 14,
+  marginBottom: 13,
   position: 'relative',
   background: '#ffffff',
-  border: '1px solid #111111',
+  border: '1px solid rgba(17, 17, 17, 0.9)',
   borderRadius: 999,
   padding: '8px 8px 8px 16px',
-  boxShadow: '0 12px 26px rgba(17, 17, 17, 0.08)',
+  boxShadow: '0 10px 24px rgba(17, 17, 17, 0.07)',
   boxSizing: 'border-box'
 }
 
@@ -76,8 +76,8 @@ const styles = {
     position: 'relative'
   },
   menuButton: {
-    width: 44,
-    height: 44,
+    width: 43,
+    height: 43,
     border: '1px solid #111111',
     borderRadius: 20,
     background: '#111111',
@@ -118,7 +118,7 @@ const styles = {
   },
   actionPill: {
     minWidth: 74,
-    height: 48,
+    height: 46,
     border: 'none',
     borderRadius: 999,
     background: '#111111',

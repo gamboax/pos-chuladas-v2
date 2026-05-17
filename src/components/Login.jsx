@@ -86,11 +86,11 @@ function Login({ onLogin }) {
 }
 
 const page = {
-  minHeight: '100svh',
+  minHeight: '100dvh',
   background: '#f4f4f4',
   display: 'grid',
   placeItems: 'center',
-  padding: 20,
+  padding: 'calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom))',
   boxSizing: 'border-box',
   fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 }
@@ -99,18 +99,19 @@ const card = {
   width: '100%',
   maxWidth: 430,
   background: '#ffffff',
-  border: '1px solid #111111',
-  borderRadius: 32,
-  padding: 26,
+  border: '1px solid rgba(17, 17, 17, 0.84)',
+  borderRadius: 30,
+  padding: '28px 24px 24px',
   display: 'grid',
-  gap: 16,
-  boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)',
+  gap: 17,
+  boxShadow: '0 18px 38px rgba(17, 17, 17, 0.07)',
   boxSizing: 'border-box',
   transition: 'border-color 140ms ease, box-shadow 140ms ease'
 }
 
 const headerBlock = {
-  marginBottom: 4
+  marginBottom: 8,
+  textAlign: 'center'
 }
 
 const eyebrow = {
@@ -124,9 +125,9 @@ const eyebrow = {
 const title = {
   margin: '8px 0 4px',
   color: '#111111',
-  fontSize: 36,
+  fontSize: 34,
   lineHeight: 1,
-  fontWeight: 760,
+  fontWeight: 720,
   letterSpacing: 0
 }
 
@@ -139,8 +140,8 @@ const subtitle = {
 const input = {
   width: '100%',
   minHeight: 60,
-  border: '1px solid #111111',
-  borderRadius: 20,
+  border: '1px solid rgba(17, 17, 17, 0.86)',
+  borderRadius: 19,
   background: '#ffffff',
   color: '#111111',
   fontSize: 18,
@@ -152,13 +153,13 @@ const input = {
 
 const button = {
   width: '100%',
-  minHeight: 62,
+  minHeight: 60,
   border: 'none',
   borderRadius: 22,
   background: '#111111',
   color: '#ffffff',
   fontSize: 18,
-  fontWeight: 760,
+  fontWeight: 720,
   boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)',
   transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
 }

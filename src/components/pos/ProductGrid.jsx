@@ -14,17 +14,17 @@ const styles = {
   grid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap: 12
+    gap: 10
   },
   categoryButton: {
-    minHeight: 64,
+    minHeight: 62,
     border: 'none',
-    borderRadius: 20,
+    borderRadius: 19,
     background: '#111111',
     color: '#ffffff',
     fontSize: 18,
     fontWeight: 680,
-    boxShadow: '0 10px 18px rgba(17, 17, 17, 0.12)',
+    boxShadow: '0 9px 16px rgba(17, 17, 17, 0.11)',
     transition: 'transform 140ms ease, opacity 140ms ease'
   }
 }

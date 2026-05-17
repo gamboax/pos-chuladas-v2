@@ -318,9 +318,9 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   if (screen === 'city') {
     return (
       <Page centered>
-        <Panel style={{ borderRadius: 32, padding: 22 }}>
-          <Stack>
-            <div>
+        <Panel style={styles.cityPanel}>
+          <Stack style={styles.cityStack}>
+            <div style={styles.cityIntro}>
               <Kicker>POS Chuladas V2</Kicker>
               <Title>Ciudad del evento</Title>
               <Muted>Define la ciudad antes de empezar a cobrar.</Muted>
@@ -332,6 +332,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
               onChange={(event) => setCityInput(event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && startCity()}
               placeholder="Ej. Matehuala"
+              style={styles.cityInput}
             />
 
             <PrimaryButton tone="success" disabled={!cityInput.trim()} onClick={startCity}>
@@ -438,7 +439,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
             menuItems={menuItems}
           />
 
-          <Panel>
+          <Panel style={styles.cashierPanel}>
             <div style={styles.mainStack}>
               <SaleSummaryCard city={activeCity} folio={folio} total={total} count={cart.length} />
               {feedback && <div style={styles.feedback}>{feedback}</div>}
@@ -548,7 +549,31 @@ function clearDraft() {
 const styles = {
   mainStack: {
     display: 'grid',
-    gap: 12
+    gap: 14
+  },
+  cityPanel: {
+    borderRadius: 34,
+    padding: '28px 24px 24px',
+    boxShadow: '0 18px 38px rgba(17, 17, 17, 0.075)'
+  },
+  cityStack: {
+    gap: 20
+  },
+  cityIntro: {
+    display: 'grid',
+    gap: 8,
+    textAlign: 'center',
+    padding: '6px 4px 2px'
+  },
+  cityInput: {
+    minHeight: 60,
+    borderRadius: 22,
+    textAlign: 'center'
+  },
+  cashierPanel: {
+    padding: 18,
+    borderRadius: 30,
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.065)'
   },
   feedback: {
     border: '1px solid #0EA371',
@@ -563,14 +588,14 @@ const styles = {
   },
   scannerButton: {
     width: '100%',
-    minHeight: 66,
-    border: '2px solid #111111',
-    borderRadius: 26,
+    minHeight: 64,
+    border: '1px solid #111111',
+    borderRadius: 24,
     background: '#DFF8EC',
     color: '#111111',
     fontSize: 18,
     fontWeight: 720,
-    boxShadow: '0 10px 20px rgba(16, 185, 129, 0.18)',
+    boxShadow: '0 10px 20px rgba(16, 185, 129, 0.14)',
     transition: 'transform 140ms ease, opacity 140ms ease'
   },
   bottomActions: {
