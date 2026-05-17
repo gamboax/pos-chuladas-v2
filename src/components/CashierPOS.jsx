@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { saveSale } from '../sales'
 
 const CATEGORIES = [
   'Anillo',
@@ -56,8 +57,12 @@ function CashierPOS({ user, onLogout }) {
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerType, setCustomerType] = useState('')
   const [lastSale, setLastSale] = useState(null)
+  const [isSavingSale, setIsSavingSale] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   const cashierName = user?.name || 'Cajera'
+  const cashierId = user?.id || user?.user_id || null
+  const canSeeAdminSoon = user?.role === 'admin' || user?.role === 'super_admin'
   const subtotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0),
     [cart]
@@ -92,6 +97,7 @@ function CashierPOS({ user, onLogout }) {
     setCustomerName('')
     setCustomerPhone('')
     setCustomerType('')
+    setSaveError('')
     setScannedItems(getScannerExamples())
   }
 
@@ -154,7 +160,8 @@ function CashierPOS({ user, onLogout }) {
         quantity,
         unitPrice,
         material: '',
-        code_detected: null
+        code_detected: null,
+        subtotal: quantity * unitPrice
       }
     ])
 
@@ -190,7 +197,8 @@ function CashierPOS({ user, onLogout }) {
         material: item.material,
         code_detected: item.code_detected,
         quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice)
+        unitPrice: Number(item.unitPrice),
+        subtotal: Number(item.quantity) * Number(item.unitPrice)
       }))
 
     if (!itemsToAdd.length) return
@@ -210,14 +218,18 @@ function CashierPOS({ user, onLogout }) {
     setCart((current) => current.filter((item) => item.id !== id))
   }
 
-  function finishSale() {
-    if (!cart.length) return
+  async function finishSale() {
+    if (!cart.length || isSavingSale) return
+
+    setIsSavingSale(true)
+    setSaveError('')
 
     const savedAt = new Date()
-    const sale = {
+    const saleToSave = {
       folio,
       city: activeCity,
-      cashier: cashierName,
+      cashierId,
+      cashierName,
       items: cart,
       subtotal,
       discountPercent: safeDiscountPercent,
@@ -225,15 +237,33 @@ function CashierPOS({ user, onLogout }) {
       total,
       paymentMethod,
       customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
+      customerWhatsapp: customerPhone.trim(),
       customerType,
-      date: savedAt.toLocaleDateString('es-MX'),
-      time: savedAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
     }
 
-    setLastSale(sale)
-    resetSale()
-    setScreen('saved')
+    try {
+      const savedSale = await saveSale(saleToSave)
+      const createdAt = savedSale.created_at ? new Date(savedSale.created_at) : savedAt
+      const ticketSale = {
+        ...saleToSave,
+        id: savedSale.id,
+        storage: savedSale.storage || 'supabase',
+        storageLabel: savedSale.storageLabel || 'Guardada en Supabase',
+        storageReason: savedSale.storageReason || '',
+        cashier: cashierName,
+        customerPhone: saleToSave.customerWhatsapp,
+        date: createdAt.toLocaleDateString('es-MX'),
+        time: createdAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+      }
+
+      setLastSale(ticketSale)
+      resetSale()
+      setScreen('saved')
+    } catch (error) {
+      setSaveError(error.message || 'No se pudo guardar la venta. Intenta de nuevo.')
+    } finally {
+      setIsSavingSale(false)
+    }
   }
 
   function sendWhatsApp() {
@@ -281,15 +311,35 @@ function CashierPOS({ user, onLogout }) {
 
     return (
       <Page>
-        <TopBar
-          title={captureCategory}
-          subtitle={captureStep === 'quantity' ? 'Paso 1: cantidad' : 'Paso 2: precio'}
-          onBack={() => setScreen('cashier')}
-        />
+        <header style={captureHeader}>
+          <div>
+            <div style={captureHeaderTitle}>Cobrando: {cashierName}</div>
+            <div style={captureHeaderMeta}>{activeCity}</div>
+          </div>
+          <button type="button" style={captureMenuButton} onClick={() => setMenuOpen((open) => !open)} aria-label="Abrir menu">
+            <span style={menuLine} />
+            <span style={menuLine} />
+            <span style={menuLine} />
+          </button>
+          {menuOpen && (
+            <div style={menuPanel}>
+              <MenuItem onClick={() => goToMenuScreen('cashier', setScreen, setMenuOpen)}>Caja</MenuItem>
+              <MenuItem onClick={() => goToMenuScreen('sale', setScreen, setMenuOpen)}>Venta</MenuItem>
+              <MenuItem onClick={changeCity}>Cambiar ciudad</MenuItem>
+              {canSeeAdminSoon && <MenuItem onClick={() => setMenuOpen(false)}>Admin proximamente</MenuItem>}
+              <MenuItem danger onClick={onLogout}>Cerrar sesion</MenuItem>
+            </div>
+          )}
+        </header>
 
-        <Panel>
-          <Stack>
-            <div style={twoColumns}>
+        <section style={capturePanel}>
+          <div style={captureStack}>
+            <div>
+              <Kicker>Captura de producto</Kicker>
+              <h1 style={captureTitle}>{captureCategory}</h1>
+            </div>
+
+            <div style={captureSelectors}>
               <StepButton
                 active={captureStep === 'quantity'}
                 label="Cantidad"
@@ -318,7 +368,7 @@ function CashierPOS({ user, onLogout }) {
                 </button>
               ))}
               <button type="button" style={keyButton} onClick={deleteKey}>
-                Borrar
+                â†
               </button>
               <button type="button" style={keyButton} onClick={() => pressKey('0')}>
                 0
@@ -328,14 +378,16 @@ function CashierPOS({ user, onLogout }) {
               </button>
             </div>
 
-            <div style={twoColumns}>
-              <SecondaryButton onClick={() => setScreen('cashier')}>Cancelar</SecondaryButton>
-              <PrimaryButton onClick={nextCaptureStep}>
+            <div style={captureActions}>
+              <button type="button" style={captureCancelButton} onClick={() => setScreen('cashier')}>
+                Cancelar
+              </button>
+              <button type="button" style={captureNextButton} onClick={nextCaptureStep}>
                 {captureStep === 'quantity' ? 'Siguiente' : 'Agregar'}
-              </PrimaryButton>
+              </button>
             </div>
-          </Stack>
-        </Panel>
+          </div>
+        </section>
       </Page>
     )
   }
@@ -374,13 +426,24 @@ function CashierPOS({ user, onLogout }) {
   if (screen === 'sale') {
     return (
       <Page>
-        <TopBar title="Venta actual" subtitle={`${cart.length} captura(s)`} onBack={() => setScreen('cashier')} />
+        <header style={header}>
+          <div>
+            <div style={headerTitle}>Venta actual</div>
+            <div style={headerMeta}>{activeCity} / {folio}</div>
+          </div>
+          <button type="button" style={saleBackPill} onClick={() => setScreen('cashier')}>
+            Caja
+          </button>
+        </header>
 
-        <Panel>
-          <Stack>
-            <div style={totalStrip}>
-              <span>Subtotal</span>
-              <strong>{money(subtotal)}</strong>
+        <section style={salePanel}>
+          <div style={saleStack}>
+            <div style={saleSummaryCard}>
+              <div>
+                <span style={saleSummaryLabel}>Subtotal</span>
+                <strong style={saleSummaryTotal}>{money(subtotal)}</strong>
+              </div>
+              <span style={saleSummaryCount}>{cart.length} articulo(s)</span>
             </div>
 
             {cart.length === 0 ? (
@@ -396,15 +459,24 @@ function CashierPOS({ user, onLogout }) {
               ))
             )}
 
-            <SecondaryButton onClick={resetSale}>Borrar venta completa</SecondaryButton>
-            <div style={twoColumns}>
-              <SecondaryButton onClick={() => setScreen('cashier')}>Regresar a caja</SecondaryButton>
-              <PrimaryButton disabled={!cart.length} onClick={() => setScreen('checkout')}>
+            <button type="button" style={saleDangerButton} onClick={resetSale}>
+              Borrar venta
+            </button>
+            <div style={saleActions}>
+              <button type="button" style={saleSecondaryButton} onClick={() => setScreen('cashier')}>
+                Regresar a caja
+              </button>
+              <button
+                type="button"
+                disabled={!cart.length}
+                style={{ ...saleTotalButton, opacity: cart.length ? 1 : 0.45 }}
+                onClick={() => setScreen('checkout')}
+              >
                 Totalizar
-              </PrimaryButton>
+              </button>
             </div>
-          </Stack>
-        </Panel>
+          </div>
+        </section>
       </Page>
     )
   }
@@ -475,8 +547,9 @@ function CashierPOS({ user, onLogout }) {
 
             <SecondaryButton onClick={() => setScreen('sale')}>Regresar a venta</SecondaryButton>
             <DangerButton onClick={resetSale}>Borrar venta</DangerButton>
-            <PrimaryButton disabled={!cart.length} onClick={finishSale}>
-              Guardar venta
+            {saveError && <div style={errorBox}>{saveError}</div>}
+            <PrimaryButton disabled={!cart.length || isSavingSale} onClick={finishSale}>
+              {isSavingSale ? 'Guardando...' : 'Guardar venta'}
             </PrimaryButton>
           </Stack>
         </Panel>
@@ -490,7 +563,7 @@ function CashierPOS({ user, onLogout }) {
         <Panel>
           <Stack>
             <div>
-              <Kicker>Venta guardada</Kicker>
+              <Kicker>{lastSale.storageLabel || 'Venta guardada'}</Kicker>
               <Title>{lastSale.folio}</Title>
             </div>
 
@@ -499,6 +572,12 @@ function CashierPOS({ user, onLogout }) {
               <SummaryLine label="Pago" value={lastSale.paymentMethod} />
               <SummaryLine label="Ciudad" value={lastSale.city} />
             </div>
+
+            {lastSale.storage === 'local' && (
+              <div style={warningBox}>
+                Modo local: {lastSale.storageReason || 'No se pudo confirmar Supabase.'}
+              </div>
+            )}
 
             <pre style={ticketBox}>{buildTicket(lastSale)}</pre>
 
@@ -529,6 +608,7 @@ function CashierPOS({ user, onLogout }) {
               <MenuItem onClick={() => goToMenuScreen('cashier', setScreen, setMenuOpen)}>Caja</MenuItem>
               <MenuItem onClick={() => goToMenuScreen('sale', setScreen, setMenuOpen)}>Venta</MenuItem>
               <MenuItem onClick={changeCity}>Cambiar ciudad</MenuItem>
+              {canSeeAdminSoon && <MenuItem onClick={() => setMenuOpen(false)}>Admin proximamente</MenuItem>}
               <MenuItem danger onClick={onLogout}>Cerrar sesion</MenuItem>
             </div>
           )}
@@ -536,7 +616,7 @@ function CashierPOS({ user, onLogout }) {
       </header>
 
       <Panel>
-        <Stack>
+        <div style={mainStack}>
           <div style={saleHero}>
             <div style={saleHeroTop}>
               <span>{activeCity}</span>
@@ -560,15 +640,27 @@ function CashierPOS({ user, onLogout }) {
           </button>
 
           <div style={bottomActions}>
-            <SecondaryButton onClick={resetSale}>Borrar</SecondaryButton>
-            <SecondaryButton disabled={!cart.length} onClick={() => setScreen('sale')}>
+            <button type="button" style={cashierBottomButton} onClick={resetSale}>
+              Borrar
+            </button>
+            <button
+              type="button"
+              disabled={!cart.length}
+              style={{ ...cashierBottomButton, opacity: cart.length ? 1 : 0.45 }}
+              onClick={() => setScreen('sale')}
+            >
               Ver venta
-            </SecondaryButton>
-            <PrimaryButton disabled={!cart.length} onClick={() => setScreen('checkout')}>
+            </button>
+            <button
+              type="button"
+              disabled={!cart.length}
+              style={{ ...cashierTotalButton, opacity: cart.length ? 1 : 0.45 }}
+              onClick={() => setScreen('checkout')}
+            >
               Totalizar
-            </PrimaryButton>
+            </button>
           </div>
-        </Stack>
+        </div>
       </Panel>
     </Page>
   )
@@ -616,10 +708,14 @@ function normalizeNumberInput(value) {
 function normalizeItemValue(item, field, value) {
   const number = Number(value)
   const minimum = field === 'unitPrice' ? 0 : 1
-
-  return {
+  const nextItem = {
     ...item,
     [field]: Number.isFinite(number) ? Math.max(minimum, number) : minimum
+  }
+
+  return {
+    ...nextItem,
+    subtotal: Number(nextItem.quantity || 0) * Number(nextItem.unitPrice || 0)
   }
 }
 
@@ -815,12 +911,14 @@ function NumberInput({ compact = false, ariaLabel, ...props }) {
   )
 }
 
-function PrimaryButton({ children, disabled = false, onClick }) {
+function PrimaryButton({ children, disabled = false, tone = 'dark', onClick }) {
+  const toneStyle = tone === 'success' ? successButton : primaryButton
+
   return (
     <button
       type="button"
       disabled={disabled}
-      style={{ ...primaryButton, opacity: disabled ? 0.45 : 1 }}
+      style={{ ...toneStyle, opacity: disabled ? 0.45 : 1 }}
       onClick={onClick}
     >
       {children}
@@ -866,7 +964,7 @@ const page = {
   background: '#f4f4f4',
   color: '#111111',
   fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  padding: 12,
+  padding: '14px 12px 22px',
   boxSizing: 'border-box',
   textAlign: 'left'
 }
@@ -880,14 +978,14 @@ const shell = {
 const panel = {
   background: '#ffffff',
   border: '1px solid #111111',
-  borderRadius: 8,
-  padding: 14,
-  boxShadow: '0 10px 24px rgba(0, 0, 0, 0.10)'
+  borderRadius: 26,
+  padding: 16,
+  boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)'
 }
 
 const stack = {
   display: 'grid',
-  gap: 12
+  gap: 14
 }
 
 const header = {
@@ -895,20 +993,25 @@ const header = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
-  marginBottom: 12,
-  position: 'relative'
+  marginBottom: 16,
+  position: 'relative',
+  background: '#ffffff',
+  border: '1px solid #111111',
+  borderRadius: 999,
+  padding: '10px 10px 10px 20px',
+  boxShadow: '0 12px 26px rgba(17, 17, 17, 0.08)'
 }
 
 const headerTitle = {
-  fontSize: 17,
-  fontWeight: 900,
+  fontSize: 16,
+  fontWeight: 700,
   lineHeight: 1.15
 }
 
 const headerMeta = {
   color: '#555555',
   fontSize: 14,
-  fontWeight: 700,
+  fontWeight: 500,
   marginTop: 2
 }
 
@@ -917,14 +1020,14 @@ const menuWrap = {
 }
 
 const menuButton = {
-  width: 48,
-  height: 48,
+  width: 50,
+  height: 50,
   border: '1px solid #111111',
-  borderRadius: 8,
-  background: '#ffffff',
+  borderRadius: 20,
+  background: '#111111',
   display: 'grid',
   placeItems: 'center',
-  padding: 10,
+  padding: 12,
   gap: 4
 }
 
@@ -932,40 +1035,145 @@ const menuLine = {
   width: 22,
   height: 2,
   borderRadius: 2,
-  background: '#111111',
+  background: '#ffffff',
   display: 'block'
 }
 
 const menuPanel = {
   position: 'absolute',
-  top: 54,
+  top: 60,
   right: 0,
   zIndex: 10,
   width: 190,
   background: '#ffffff',
   border: '1px solid #111111',
-  borderRadius: 8,
-  boxShadow: '0 14px 30px rgba(0, 0, 0, 0.18)',
+  borderRadius: 18,
+  boxShadow: '0 18px 38px rgba(17, 17, 17, 0.18)',
   overflow: 'hidden'
 }
 
 const menuItem = {
   width: '100%',
-  minHeight: 48,
+  minHeight: 52,
   border: 'none',
   borderBottom: '1px solid #ececec',
   background: '#ffffff',
   textAlign: 'left',
-  padding: '0 14px',
-  fontWeight: 900,
+  padding: '0 16px',
+  fontWeight: 720,
   fontSize: 16
 }
 
-const saleHero = {
+const mainStack = {
+  display: 'grid',
+  gap: 16
+}
+
+const captureHeader = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  marginBottom: 16,
+  position: 'relative',
+  background: '#ffffff',
+  border: '1px solid #111111',
+  borderRadius: 999,
+  padding: '10px 10px 10px 20px',
+  boxShadow: '0 14px 28px rgba(17, 17, 17, 0.08)'
+}
+
+const captureHeaderTitle = {
+  color: '#111111',
+  fontSize: 16,
+  fontWeight: 700,
+  lineHeight: 1.15
+}
+
+const captureHeaderMeta = {
+  color: '#666666',
+  fontSize: 14,
+  fontWeight: 500,
+  marginTop: 3
+}
+
+const captureMenuButton = {
+  width: 52,
+  height: 52,
+  border: '1px solid #111111',
+  borderRadius: 18,
   background: '#111111',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 13,
+  gap: 4
+}
+
+const capturePanel = {
+  background: '#ffffff',
+  border: '2px solid #111111',
+  borderRadius: 32,
+  padding: 24,
+  boxShadow: '0 18px 34px rgba(17, 17, 17, 0.09)'
+}
+
+const captureStack = {
+  display: 'grid',
+  gap: 14
+}
+
+const captureTitle = {
+  margin: '6px 0 2px',
+  color: '#111111',
+  fontSize: 36,
+  lineHeight: 1,
+  fontWeight: 760,
+  letterSpacing: 0
+}
+
+const captureSelectors = {
+  display: 'grid',
+  gap: 12
+}
+
+const captureActions = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 12,
+  marginTop: 2
+}
+
+const captureCancelButton = {
+  width: '100%',
+  minHeight: 72,
+  border: '1px solid #111111',
+  borderRadius: 24,
+  background: '#ffffff',
+  color: '#111111',
+  fontSize: 18,
+  fontWeight: 700,
+  boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)'
+}
+
+const captureNextButton = {
+  width: '100%',
+  minHeight: 72,
+  border: 'none',
+  borderRadius: 24,
+  background: '#22c55e',
   color: '#ffffff',
-  borderRadius: 8,
-  padding: 16
+  fontSize: 18,
+  fontWeight: 760,
+  boxShadow: '0 12px 22px rgba(34, 197, 94, 0.22)'
+}
+
+const saleHero = {
+  background: '#ffffff',
+  color: '#111111',
+  border: '1px solid #111111',
+  borderRadius: 28,
+  padding: '20px 20px 22px',
+  boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)'
 }
 
 const saleHeroTop = {
@@ -973,96 +1181,137 @@ const saleHeroTop = {
   justifyContent: 'space-between',
   gap: 10,
   fontSize: 14,
-  fontWeight: 800,
-  marginBottom: 12
+  fontWeight: 620,
+  marginBottom: 18
 }
 
 const heroLabel = {
-  color: '#cfcfcf',
-  fontSize: 13,
-  fontWeight: 900,
+  color: '#717171',
+  fontSize: 12,
+  fontWeight: 650,
   textTransform: 'uppercase'
 }
 
 const heroTotal = {
-  fontSize: 46,
+  fontSize: 54,
   lineHeight: 1,
-  fontWeight: 950,
-  marginTop: 4,
+  fontWeight: 720,
+  marginTop: 6,
   letterSpacing: 0
 }
 
 const heroCount = {
-  color: '#d6d6d6',
+  color: '#666666',
   fontSize: 15,
-  fontWeight: 800,
-  marginTop: 8
+  fontWeight: 500,
+  marginTop: 10
 }
 
 const productGrid = {
   display: 'grid',
   gridTemplateColumns: '1fr 1fr',
-  gap: 10
+  gap: 12
 }
 
 const categoryButton = {
-  minHeight: 62,
+  minHeight: 68,
   border: 'none',
-  borderRadius: 8,
+  borderRadius: 22,
   background: '#111111',
   color: '#ffffff',
   fontSize: 18,
-  fontWeight: 950
+  fontWeight: 680,
+  boxShadow: '0 10px 18px rgba(17, 17, 17, 0.12)'
 }
 
 const scannerButton = {
   width: '100%',
-  minHeight: 72,
+  minHeight: 78,
   border: '2px solid #111111',
-  borderRadius: 8,
-  background: '#ffffff',
+  borderRadius: 26,
+  background: '#f2fbf4',
   color: '#111111',
-  fontSize: 21,
-  fontWeight: 950
+  fontSize: 20,
+  fontWeight: 720,
+  boxShadow: '0 10px 20px rgba(34, 197, 94, 0.10)'
 }
 
 const bottomActions = {
   display: 'grid',
   gridTemplateColumns: '1fr 1fr 1fr',
-  gap: 8
+  gap: 10
+}
+
+const cashierBottomButton = {
+  width: '100%',
+  minHeight: 58,
+  border: '1px solid #111111',
+  borderRadius: 20,
+  background: '#ffffff',
+  color: '#111111',
+  fontSize: 16,
+  fontWeight: 680,
+  boxShadow: '0 8px 16px rgba(17, 17, 17, 0.04)'
+}
+
+const cashierTotalButton = {
+  ...cashierBottomButton,
+  border: '1px solid #8ed9a0',
+  background: '#c9f5d2',
+  boxShadow: '0 10px 18px rgba(34, 197, 94, 0.14)'
+}
+
+const saleBackPill = {
+  minWidth: 74,
+  height: 48,
+  border: 'none',
+  borderRadius: 999,
+  background: '#111111',
+  color: '#ffffff',
+  fontSize: 15,
+  fontWeight: 700
 }
 
 const primaryButton = {
   width: '100%',
   minHeight: 56,
   border: 'none',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#111111',
   color: '#ffffff',
   fontSize: 17,
-  fontWeight: 950
+  fontWeight: 760,
+  boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)'
+}
+
+const successButton = {
+  ...primaryButton,
+  border: '1px solid #8ed9a0',
+  background: '#c9f5d2',
+  color: '#111111',
+  boxShadow: '0 10px 18px rgba(34, 197, 94, 0.14)'
 }
 
 const secondaryButton = {
   width: '100%',
   minHeight: 56,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#ffffff',
   color: '#111111',
   fontSize: 16,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const dangerButton = {
   width: '100%',
   minHeight: 54,
   border: '1px solid #b91c1c',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#fff5f5',
   color: '#b91c1c',
   fontSize: 16,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const topBar = {
@@ -1076,30 +1325,30 @@ const backButton = {
   minWidth: 86,
   height: 46,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 999,
   background: '#ffffff',
   color: '#111111',
   fontSize: 15,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const topTitle = {
   fontSize: 21,
-  fontWeight: 950,
+  fontWeight: 760,
   lineHeight: 1.1
 }
 
 const topSubtitle = {
   color: '#555555',
   fontSize: 14,
-  fontWeight: 750,
+  fontWeight: 560,
   marginTop: 2
 }
 
 const kicker = {
   color: '#555555',
   fontSize: 13,
-  fontWeight: 950,
+  fontWeight: 720,
   textTransform: 'uppercase'
 }
 
@@ -1108,7 +1357,7 @@ const title = {
   color: '#111111',
   fontSize: 34,
   lineHeight: 1,
-  fontWeight: 950,
+  fontWeight: 780,
   letterSpacing: 0
 }
 
@@ -1116,32 +1365,32 @@ const muted = {
   color: '#555555',
   margin: 0,
   fontSize: 16,
-  fontWeight: 650
+  fontWeight: 480
 }
 
 const textInput = {
   width: '100%',
   minHeight: 56,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#ffffff',
   color: '#111111',
   fontSize: 18,
-  fontWeight: 800,
+  fontWeight: 560,
   padding: '0 12px',
   boxSizing: 'border-box'
 }
 
 const compactInput = {
-  width: 58,
-  height: 44,
+  width: '100%',
+  height: 46,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 16,
   background: '#ffffff',
   color: '#111111',
   textAlign: 'center',
   fontSize: 16,
-  fontWeight: 900,
+  fontWeight: 650,
   boxSizing: 'border-box'
 }
 
@@ -1158,65 +1407,69 @@ const threeColumns = {
 }
 
 const stepButton = {
-  minHeight: 78,
-  border: '1px solid #111111',
-  borderRadius: 8,
-  padding: 10,
-  display: 'grid',
-  gap: 6,
-  textAlign: 'left',
-  fontSize: 15,
-  fontWeight: 800
-}
-
-const subtotalCard = {
-  minHeight: 58,
-  borderRadius: 8,
-  background: '#f5f5f5',
-  color: '#111111',
-  padding: '0 14px',
+  minHeight: 84,
+  border: 'none',
+  borderRadius: 24,
+  padding: '14px 18px',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  fontSize: 18,
-  fontWeight: 950
+  gap: 14,
+  textAlign: 'left',
+  fontSize: 17,
+  fontWeight: 620
+}
+
+const subtotalCard = {
+  minHeight: 68,
+  borderRadius: 24,
+  background: '#22c55e',
+  color: '#ffffff',
+  padding: '0 18px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  fontSize: 20,
+  fontWeight: 760,
+  boxShadow: '0 12px 22px rgba(34, 197, 94, 0.18)'
 }
 
 const numberDisplay = {
-  minHeight: 66,
-  border: '1px solid #d7d7d7',
-  borderRadius: 8,
-  background: '#ffffff',
+  minHeight: 74,
+  border: 'none',
+  borderRadius: 24,
+  background: '#f2f2f2',
   color: '#111111',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'flex-end',
-  padding: '0 14px',
-  fontSize: 34,
-  fontWeight: 950,
+  padding: '0 20px',
+  fontSize: 38,
+  fontWeight: 760,
   overflow: 'hidden'
 }
 
 const keypad = {
   display: 'grid',
   gridTemplateColumns: '1fr 1fr 1fr',
-  gap: 8
+  gap: 14
 }
 
 const keyButton = {
-  minHeight: 58,
+  minHeight: 86,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 24,
   background: '#ffffff',
   color: '#111111',
-  fontSize: 22,
-  fontWeight: 950
+  fontSize: 30,
+  fontWeight: 650,
+  boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)'
 }
 
 const cameraBox = {
   minHeight: 230,
   border: '2px dashed #111111',
-  borderRadius: 8,
+  borderRadius: 24,
   background: '#f5f5f5',
   display: 'grid',
   placeItems: 'center',
@@ -1233,16 +1486,17 @@ const cameraCircle = {
   border: '2px solid #111111',
   display: 'grid',
   placeItems: 'center',
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const editableItem = {
-  border: '1px solid #d7d7d7',
-  borderRadius: 8,
+  border: '1px solid #111111',
+  borderRadius: 24,
   background: '#ffffff',
-  padding: 12,
+  padding: 14,
   display: 'grid',
-  gap: 10
+  gap: 12,
+  boxShadow: '0 10px 22px rgba(17, 17, 17, 0.06)'
 }
 
 const itemTop = {
@@ -1254,53 +1508,140 @@ const itemTop = {
 
 const itemTitle = {
   color: '#111111',
-  fontSize: 18
+  fontSize: 18,
+  fontWeight: 700
 }
 
 const itemMeta = {
   color: '#666666',
   fontSize: 13,
-  fontWeight: 700,
+  fontWeight: 500,
   marginTop: 2
 }
 
 const itemTotal = {
   color: '#111111',
   fontSize: 18,
+  fontWeight: 700,
   whiteSpace: 'nowrap'
 }
 
 const editorRow = {
   display: 'grid',
-  gridTemplateColumns: '44px 58px 44px 58px 1fr',
-  gap: 6,
+  gridTemplateColumns: '46px 62px 46px 70px 1fr',
+  gap: 8,
   alignItems: 'center'
 }
 
 const smallButton = {
-  width: 44,
-  height: 44,
+  width: 46,
+  height: 46,
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 16,
   background: '#111111',
   color: '#ffffff',
   fontSize: 22,
-  fontWeight: 950
+  fontWeight: 700
 }
 
 const deleteButton = {
-  height: 44,
+  height: 46,
   border: '1px solid #b91c1c',
-  borderRadius: 8,
+  borderRadius: 16,
   background: '#fff5f5',
   color: '#b91c1c',
   fontSize: 13,
-  fontWeight: 950
+  fontWeight: 700
+}
+
+const salePanel = {
+  background: '#ffffff',
+  border: '1px solid #111111',
+  borderRadius: 30,
+  padding: 16,
+  boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)'
+}
+
+const saleStack = {
+  display: 'grid',
+  gap: 14
+}
+
+const saleSummaryCard = {
+  border: '1px solid #111111',
+  borderRadius: 26,
+  background: '#ffffff',
+  padding: '18px 18px 16px',
+  display: 'flex',
+  alignItems: 'flex-end',
+  justifyContent: 'space-between',
+  gap: 12,
+  boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)'
+}
+
+const saleSummaryLabel = {
+  display: 'block',
+  color: '#666666',
+  fontSize: 13,
+  fontWeight: 650,
+  textTransform: 'uppercase',
+  marginBottom: 6
+}
+
+const saleSummaryTotal = {
+  display: 'block',
+  color: '#111111',
+  fontSize: 38,
+  lineHeight: 1,
+  fontWeight: 720,
+  letterSpacing: 0
+}
+
+const saleSummaryCount = {
+  color: '#666666',
+  fontSize: 14,
+  fontWeight: 500,
+  whiteSpace: 'nowrap',
+  paddingBottom: 2
+}
+
+const saleDangerButton = {
+  width: '100%',
+  minHeight: 56,
+  border: '1px solid #b91c1c',
+  borderRadius: 20,
+  background: '#fff5f5',
+  color: '#b91c1c',
+  fontSize: 16,
+  fontWeight: 700
+}
+
+const saleActions = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 10
+}
+
+const saleSecondaryButton = {
+  width: '100%',
+  minHeight: 62,
+  border: '1px solid #111111',
+  borderRadius: 22,
+  background: '#ffffff',
+  color: '#111111',
+  fontSize: 16,
+  fontWeight: 700
+}
+
+const saleTotalButton = {
+  ...saleSecondaryButton,
+  border: '1px solid #8ed9a0',
+  background: '#c9f5d2'
 }
 
 const totalStrip = {
   minHeight: 62,
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#111111',
   color: '#ffffff',
   padding: '0 14px',
@@ -1308,12 +1649,12 @@ const totalStrip = {
   alignItems: 'center',
   justifyContent: 'space-between',
   fontSize: 20,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const summaryBox = {
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 20,
   background: '#ffffff',
   padding: 12,
   display: 'grid',
@@ -1326,7 +1667,7 @@ const summaryLine = {
   gap: 10,
   color: '#333333',
   fontSize: 16,
-  fontWeight: 800
+  fontWeight: 560
 }
 
 const summaryTotal = {
@@ -1337,32 +1678,53 @@ const summaryTotal = {
   gap: 10,
   color: '#111111',
   fontSize: 28,
-  fontWeight: 950
+  fontWeight: 760
 }
 
 const notice = {
   border: '1px solid #111111',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#f5f5f5',
   color: '#111111',
   padding: 12,
   fontSize: 15,
-  fontWeight: 950
+  fontWeight: 680
+}
+
+const warningBox = {
+  background: '#fff7ed',
+  border: '1px solid #fed7aa',
+  borderRadius: 18,
+  color: '#9a3412',
+  fontWeight: 700,
+  padding: 14,
+  textAlign: 'center',
+  fontSize: 14
+}
+
+const errorBox = {
+  background: '#fee2e2',
+  border: '1px solid #fecaca',
+  borderRadius: 12,
+  color: '#991b1b',
+  fontWeight: 800,
+  padding: 14,
+  textAlign: 'center'
 }
 
 const sectionTitle = {
   marginTop: 4,
   color: '#111111',
   fontSize: 17,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const choiceButton = {
   minHeight: 52,
   border: '1px solid #d7d7d7',
-  borderRadius: 8,
+  borderRadius: 18,
   fontSize: 16,
-  fontWeight: 950
+  fontWeight: 720
 }
 
 const ticketBox = {
@@ -1371,7 +1733,7 @@ const ticketBox = {
   overflow: 'auto',
   whiteSpace: 'pre-wrap',
   border: '1px solid #d7d7d7',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#f5f5f5',
   color: '#111111',
   padding: 12,
@@ -1382,13 +1744,13 @@ const ticketBox = {
 
 const empty = {
   border: '1px dashed #a3a3a3',
-  borderRadius: 8,
+  borderRadius: 18,
   background: '#f5f5f5',
   color: '#555555',
   padding: 18,
   textAlign: 'center',
   fontSize: 16,
-  fontWeight: 800
+  fontWeight: 560
 }
 
 export default CashierPOS

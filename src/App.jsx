@@ -1,122 +1,94 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import Login from './components/Login'
+import CashierPOS from './components/CashierPOS'
+
+const CASHIER_ROLES = new Set(['cashier', 'admin', 'super_admin'])
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [user, setUser] = useState(null)
 
+  if (!user) {
+    return <Login onLogin={setUser} />
+  }
+
+  if (CASHIER_ROLES.has(user.role)) {
+    return <CashierPOS user={user} onLogout={() => setUser(null)} />
+  }
+
+  if (user.role === 'investor') {
+    return <InvestorPlaceholder user={user} onLogout={() => setUser(null)} />
+  }
+
+  return <Login onLogin={setUser} />
+}
+
+function InvestorPlaceholder({ user, onLogout }) {
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
+    <main style={page}>
+      <section style={card}>
+        <p style={eyebrow}>POS Chuladas V2</p>
+        <h1 style={title}>Vista inversionista proximamente.</h1>
+        <p style={copy}>Hola, {user.name}. Esta vista queda reservada para una fase posterior.</p>
+        <button type="button" style={button} onClick={onLogout}>
+          Cerrar sesion
         </button>
       </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+    </main>
   )
+}
+
+const page = {
+  minHeight: '100svh',
+  background: '#f4f4f4',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 16,
+  boxSizing: 'border-box',
+  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+}
+
+const card = {
+  width: '100%',
+  maxWidth: 430,
+  background: '#ffffff',
+  border: '1px solid #111111',
+  borderRadius: 30,
+  padding: 24,
+  boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)',
+  boxSizing: 'border-box'
+}
+
+const eyebrow = {
+  margin: 0,
+  color: '#666666',
+  fontSize: 13,
+  fontWeight: 700,
+  textTransform: 'uppercase'
+}
+
+const title = {
+  margin: '8px 0',
+  color: '#111111',
+  fontSize: 30,
+  lineHeight: 1.05,
+  fontWeight: 760
+}
+
+const copy = {
+  margin: '0 0 18px',
+  color: '#555555',
+  fontSize: 16
+}
+
+const button = {
+  width: '100%',
+  minHeight: 58,
+  border: 'none',
+  borderRadius: 20,
+  background: '#111111',
+  color: '#ffffff',
+  fontSize: 17,
+  fontWeight: 760
 }
 
 export default App
