@@ -51,10 +51,22 @@ export async function saveSale(sale) {
 }
 
 export async function fetchTodaySalesSummary() {
+  const result = await fetchTodayAdminData()
+  return {
+    storage: result.storage,
+    reason: result.reason,
+    sales: result.sales
+  }
+}
+
+export async function fetchTodayAdminData() {
   if (!hasSupabaseConfig || !supabase) {
     return {
       storage: 'local',
-      sales: readLocalSales().filter(isTodaySale)
+      reason: 'Supabase no esta configurado en este entorno.',
+      sales: readLocalSales().filter(isTodaySale),
+      expenses: [],
+      cashCuts: []
     }
   }
 
@@ -62,28 +74,115 @@ export async function fetchTodaySalesSummary() {
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
 
-  const { data, error } = await supabase
-    .from('sales')
-    .select('id, total, payment_method, created_at')
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString())
-    .order('created_at', { ascending: false })
+  const [salesResult, expensesResult, cashCutsResult] = await Promise.all([
+    supabase
+      .from('sales')
+      .select('id, total, payment_method, created_at')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('expenses')
+      .select('id, city, category, description, amount, payment_method, created_at')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('cash_cuts')
+      .select('id, city, cashier_name, total_sales, expected_cash, cash_counted, transfer_total, card_total, cash_expenses, difference, notes, created_at')
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(5)
+  ])
 
-  if (error) {
-    if (isMissingSchemaError(error)) {
+  if (salesResult.error) {
+    if (isMissingSchemaError(salesResult.error)) {
       return {
         storage: 'local',
         reason: 'La tabla sales no existe o no esta expuesta en Supabase.',
-        sales: readLocalSales().filter(isTodaySale)
+        sales: readLocalSales().filter(isTodaySale),
+        expenses: [],
+        cashCuts: []
       }
     }
 
-    throw new Error(error.message || 'No se pudieron cargar ventas del dia.')
+    throw new Error(salesResult.error.message || 'No se pudieron cargar ventas del dia.')
+  }
+
+  if (expensesResult.error && !isMissingSchemaError(expensesResult.error)) {
+    throw new Error(expensesResult.error.message || 'No se pudieron cargar gastos del dia.')
+  }
+
+  if (cashCutsResult.error && !isMissingSchemaError(cashCutsResult.error)) {
+    throw new Error(cashCutsResult.error.message || 'No se pudieron cargar cortes de caja.')
   }
 
   return {
     storage: 'supabase',
-    sales: data || []
+    reason: expensesResult.error || cashCutsResult.error ? 'Faltan tablas de gastos/cortes. Ejecuta supabase-sales.sql.' : '',
+    sales: salesResult.data || [],
+    expenses: expensesResult.error ? [] : expensesResult.data || [],
+    cashCuts: cashCutsResult.error ? [] : cashCutsResult.data || []
+  }
+}
+
+export async function saveExpense(expense) {
+  requireSupabase('guardar gastos')
+
+  const payload = {
+    city: expense.city || null,
+    category: expense.category,
+    description: expense.description,
+    amount: Number(expense.amount),
+    payment_method: expense.paymentMethod || 'Efectivo'
+  }
+
+  const { data, error } = await supabase
+    .from('expenses')
+    .insert(payload)
+    .select('id, city, category, description, amount, payment_method, created_at')
+    .single()
+
+  if (error) {
+    throw new Error(buildSupabaseModuleError(error, 'gastos'))
+  }
+
+  return data
+}
+
+export async function saveCashCut(cut) {
+  requireSupabase('guardar corte de caja')
+
+  const payload = {
+    city: cut.city,
+    cashier_name: cut.cashierName,
+    total_sales: Number(cut.totalSales),
+    expected_cash: Number(cut.expectedCash),
+    cash_counted: Number(cut.cashCounted),
+    transfer_total: Number(cut.transferTotal),
+    card_total: Number(cut.cardTotal),
+    cash_expenses: Number(cut.cashExpenses),
+    difference: Number(cut.difference),
+    notes: cut.notes || null
+  }
+
+  const { data, error } = await supabase
+    .from('cash_cuts')
+    .insert(payload)
+    .select('id, city, cashier_name, total_sales, expected_cash, cash_counted, transfer_total, card_total, cash_expenses, difference, notes, created_at')
+    .single()
+
+  if (error) {
+    throw new Error(buildSupabaseModuleError(error, 'corte de caja'))
+  }
+
+  return data
+}
+
+function requireSupabase(action) {
+  if (!hasSupabaseConfig || !supabase) {
+    throw new Error(`Supabase no esta configurado para ${action}.`)
   }
 }
 
@@ -187,6 +286,14 @@ function itemSubtotal(item) {
   return Number(item.quantity || 0) * Number(item.unitPrice || 0)
 }
 
+function buildSupabaseModuleError(error, moduleName) {
+  if (isMissingSchemaError(error)) {
+    return `No se pudo guardar ${moduleName}: falta la tabla o columnas necesarias. Ejecuta supabase-sales.sql.`
+  }
+
+  return error.message || `No se pudo guardar ${moduleName}.`
+}
+
 function isMissingSchemaError(error) {
   const message = String(error?.message || '').toLowerCase()
   const details = String(error?.details || '').toLowerCase()
@@ -195,6 +302,7 @@ function isMissingSchemaError(error) {
     MISSING_SCHEMA_CODES.has(error?.code) ||
     message.includes('schema cache') ||
     message.includes('relation') ||
+    message.includes('column') ||
     details.includes('schema cache') ||
     details.includes('does not exist')
   )
