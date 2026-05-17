@@ -45,17 +45,17 @@ export default function EditableItem({ item, onChange, onRemove }) {
 
 const styles = {
   item: {
+    width: '100%',
     border: '1px solid #111111',
     borderRadius: 20,
     background: '#ffffff',
     padding: 14,
     display: 'grid',
     gap: 12,
-    boxShadow: '0 10px 22px rgba(17, 17, 17, 0.06)',
+    boxShadow: '0 6px 12px rgba(17, 17, 17, 0.045)',
     boxSizing: 'border-box',
     maxWidth: '100%',
-    minWidth: 0,
-    overflow: 'hidden'
+    minWidth: 0
   },
   itemTop: {
     display: 'grid',
@@ -98,7 +98,8 @@ const styles = {
     alignItems: 'center',
     minWidth: 0,
     maxWidth: '100%',
-    width: '100%'
+    width: '100%',
+    boxSizing: 'border-box'
   },
   smallButton: {
     width: '100%',
@@ -108,7 +109,8 @@ const styles = {
     background: '#111111',
     color: '#ffffff',
     fontSize: 22,
-    fontWeight: 700
+    fontWeight: 700,
+    boxSizing: 'border-box'
   },
   deleteButton: {
     gridColumn: '1 / -1',
@@ -119,6 +121,7 @@ const styles = {
     background: '#fff5f5',
     color: '#b91c1c',
     fontSize: 13,
-    fontWeight: 700
+    fontWeight: 700,
+    boxSizing: 'border-box'
   }
 }

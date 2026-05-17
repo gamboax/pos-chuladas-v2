@@ -109,8 +109,9 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
   return (
     <>
       <TopBar title="Escanear articulos" subtitle="Camara real / OCR pendiente" onBack={goBack} />
-      <Panel style={styles.panel}>
-        <Stack style={styles.stack}>
+      <Panel style={styles.panelOuter}>
+        <div style={styles.panelInner}>
+          <Stack style={styles.stack}>
           <div style={styles.cameraBox}>
             {capturedImage ? (
               <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
@@ -160,7 +161,8 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
           <PrimaryButton tone="success" disabled={!items.length} onClick={onConfirm}>
             Confirmar y agregar
           </PrimaryButton>
-        </Stack>
+          </Stack>
+        </div>
       </Panel>
     </>
   )
@@ -183,16 +185,25 @@ function cameraErrorMessage(error) {
 }
 
 const styles = {
-  panel: {
-    padding: 16,
+  panelOuter: {
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    padding: 0,
     borderRadius: 28,
     border: '1px solid rgba(17, 17, 17, 0.84)',
     boxSizing: 'border-box',
+    overflow: 'visible'
+  },
+  panelInner: {
+    width: '100%',
     maxWidth: '100%',
     minWidth: 0,
-    overflow: 'hidden'
+    padding: 20,
+    boxSizing: 'border-box'
   },
   stack: {
+    width: '100%',
     gap: 13,
     minWidth: 0,
     maxWidth: '100%'
@@ -204,10 +215,11 @@ const styles = {
     background: '#111111',
     position: 'relative',
     overflow: 'hidden',
-    boxShadow: '0 12px 24px rgba(17, 17, 17, 0.12)',
+    boxShadow: '0 6px 12px rgba(17, 17, 17, 0.08)',
     boxSizing: 'border-box',
     width: '100%',
-    maxWidth: '100%'
+    maxWidth: '100%',
+    minWidth: 0
   },
   video: {
     width: '100%',
@@ -253,8 +265,9 @@ const styles = {
     minWidth: 0
   },
   cameraActions: {
+    width: '100%',
     display: 'grid',
-    gridTemplateColumns: '1fr',
+    gridTemplateColumns: 'minmax(0, 1fr)',
     gap: 10,
     minWidth: 0,
     maxWidth: '100%'
@@ -302,6 +315,7 @@ const styles = {
     display: 'none'
   },
   detectedHeader: {
+    width: '100%',
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)',
     alignItems: 'center',

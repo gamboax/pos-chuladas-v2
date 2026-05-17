@@ -1,20 +1,20 @@
-﻿export function Page({ children, centered = false }) {
+export function Page({ children,centered = false }) {
   return (
-    <main style={{ ...styles.page, ...(centered ? styles.centeredPage : {}) }}>
+    <main style={{ ...styles.page,...(centered ? styles.centeredPage : {}) }}>
       <div style={styles.shell}>{children}</div>
     </main>
   )
 }
 
-export function Panel({ children, style }) {
-  return <section className="pos-surface" style={{ ...styles.panel, ...(style || {}) }}>{children}</section>
+export function Panel({ children,style }) {
+  return <section className="pos-surface" style={{ ...styles.panel,...(style || {}) }}>{children}</section>
 }
 
-export function Stack({ children, style }) {
-  return <div style={{ ...styles.stack, ...(style || {}) }}>{children}</div>
+export function Stack({ children,style }) {
+  return <div style={{ ...styles.stack,...(style || {}) }}>{children}</div>
 }
 
-export function TopBar({ title, subtitle, onBack }) {
+export function TopBar({ title,subtitle,onBack }) {
   return (
     <header style={styles.topBar}>
       <button type="button" style={styles.backButton} onClick={onBack}>
@@ -48,7 +48,7 @@ export function Empty({ children }) {
   return <div style={styles.empty}>{children}</div>
 }
 
-export function SummaryLine({ label, value }) {
+export function SummaryLine({ label,value }) {
   return (
     <div style={styles.summaryLine}>
       <span style={styles.summaryLabelText}>{label}</span>
@@ -57,14 +57,14 @@ export function SummaryLine({ label, value }) {
   )
 }
 
-export function PrimaryButton({ children, disabled = false, tone = 'dark', onClick }) {
+export function PrimaryButton({ children,disabled = false,tone = 'dark',onClick }) {
   const toneStyle = tone === 'success' ? styles.successButton : styles.primaryButton
 
   return (
     <button
       type="button"
       disabled={disabled}
-      style={{ ...toneStyle, opacity: disabled ? 0.45 : 1 }}
+      style={{ ...toneStyle,opacity: disabled ? 0.45 : 1 }}
       onClick={onClick}
     >
       {children}
@@ -72,12 +72,12 @@ export function PrimaryButton({ children, disabled = false, tone = 'dark', onCli
   )
 }
 
-export function SecondaryButton({ children, disabled = false, onClick }) {
+export function SecondaryButton({ children,disabled = false,onClick }) {
   return (
     <button
       type="button"
       disabled={disabled}
-      style={{ ...styles.secondaryButton, opacity: disabled ? 0.45 : 1 }}
+      style={{ ...styles.secondaryButton,opacity: disabled ? 0.45 : 1 }}
       onClick={onClick}
     >
       {children}
@@ -85,7 +85,7 @@ export function SecondaryButton({ children, disabled = false, onClick }) {
   )
 }
 
-export function DangerButton({ children, onClick }) {
+export function DangerButton({ children,onClick }) {
   return (
     <button type="button" style={styles.dangerButton} onClick={onClick}>
       {children}
@@ -94,10 +94,10 @@ export function DangerButton({ children, onClick }) {
 }
 
 export function TextInput(props) {
-  return <input {...props} style={{ ...styles.textInput, ...(props.style || {}) }} />
+  return <input {...props} style={{ ...styles.textInput,...(props.style || {}) }} />
 }
 
-export function NumberInput({ compact = false, ariaLabel, ...props }) {
+export function NumberInput({ compact = false,ariaLabel,...props }) {
   return (
     <input
       {...props}
@@ -110,7 +110,7 @@ export function NumberInput({ compact = false, ariaLabel, ...props }) {
   )
 }
 
-export function ChoiceButton({ active, children, onClick }) {
+export function ChoiceButton({ active,children,onClick }) {
   return (
     <button
       type="button"
@@ -129,14 +129,14 @@ export function ChoiceButton({ active, children, onClick }) {
 
 export const SUCCESS = '#10B981'
 export const SUCCESS_SOFT = '#DFF8EC'
-export const SUCCESS_SHADOW = 'rgba(16, 185, 129, 0.22)'
+export const SUCCESS_SHADOW = 'rgba(16,185,129,0.22)'
 
 export const styles = {
   page: {
     minHeight: '100dvh',
     background: '#f4f4f4',
     color: '#111111',
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontFamily: "system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
     padding: 'calc(19px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))',
     boxSizing: 'border-box',
     textAlign: 'left',
@@ -158,14 +158,13 @@ export const styles = {
   },
   panel: {
     background: '#ffffff',
-    border: '1px solid rgba(17, 17, 17, 0.8)',
+    border: '1px solid rgba(17,17,17,0.8)',
     borderRadius: 28,
     padding: 18,
-    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.06)',
+    boxShadow: '0 14px 30px rgba(17,17,17,0.06)',
     boxSizing: 'border-box',
     maxWidth: '100%',
-    minWidth: 0,
-    overflow: 'hidden'
+    minWidth: 0
   },
   stack: {
     display: 'grid',
@@ -191,7 +190,7 @@ export const styles = {
     color: '#111111',
     fontSize: 15,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease',
     flexShrink: 0
   },
   topText: {
@@ -245,8 +244,8 @@ export const styles = {
     color: '#ffffff',
     fontSize: 17,
     fontWeight: 730,
-    boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)',
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxShadow: '0 8px 14px rgba(17,17,17,0.12)',
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease',
     boxSizing: 'border-box',
     maxWidth: '100%'
   },
@@ -259,21 +258,21 @@ export const styles = {
     color: '#ffffff',
     fontSize: 17,
     fontWeight: 730,
-    boxShadow: `0 12px 22px ${SUCCESS_SHADOW}`,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxShadow: `0 8px 14px ${SUCCESS_SHADOW}`,
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease',
     boxSizing: 'border-box',
     maxWidth: '100%'
   },
   secondaryButton: {
     width: '100%',
     minHeight: 56,
-    border: '1px solid rgba(17, 17, 17, 0.86)',
+    border: '1px solid rgba(17,17,17,0.86)',
     borderRadius: 19,
     background: '#ffffff',
     color: '#111111',
     fontSize: 16,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease',
     boxSizing: 'border-box',
     maxWidth: '100%'
   },
@@ -286,7 +285,7 @@ export const styles = {
     color: '#b91c1c',
     fontSize: 16,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease',
     boxSizing: 'border-box',
     maxWidth: '100%'
   },
@@ -303,7 +302,7 @@ export const styles = {
     fontWeight: 540,
     padding: '0 16px',
     boxSizing: 'border-box',
-    transition: 'border-color 140ms ease, box-shadow 140ms ease, background 140ms ease'
+    transition: 'border-color 140ms ease,box-shadow 140ms ease,background 140ms ease'
   },
   compactInput: {
     width: '100%',
@@ -327,13 +326,13 @@ export const styles = {
     borderRadius: 18,
     fontSize: 16,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease,box-shadow 140ms ease,opacity 140ms ease'
   },
   summaryLine: {
     minWidth: 0,
     maxWidth: '100%',
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
     alignItems: 'start',
     gap: 10,
     color: '#333333',
@@ -368,13 +367,13 @@ export const styles = {
   },
   twoColumns: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
     gap: 10,
     minWidth: 0
   },
   threeColumns: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+    gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)',
     gap: 8,
     minWidth: 0
   },
@@ -395,10 +394,10 @@ export const styles = {
     borderTop: '1px solid #d7d7d7',
     paddingTop: 12,
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr)',
+    gridTemplateColumns: 'minmax(0,1fr)',
     gap: 4,
     color: '#111111',
-    fontSize: 'clamp(24px, 7vw, 28px)',
+    fontSize: 'clamp(24px,7vw,28px)',
     fontWeight: 740,
     overflowWrap: 'anywhere'
   },
@@ -435,6 +434,6 @@ export const styles = {
     padding: 14,
     fontSize: 13,
     lineHeight: 1.45,
-    fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace'
+    fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace'
   }
 }

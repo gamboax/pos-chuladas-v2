@@ -8,37 +8,39 @@ export default function SaleEditor({ city, folio, cart, subtotal, onBack, onChan
     <>
       <HeaderBar title="Venta actual" subtitle={`${city} / ${folio}`} actionLabel="Caja" onAction={onBack} />
 
-      <section style={styles.panel}>
-        <div style={styles.stack}>
-          <div style={styles.summaryCard}>
-            <div style={styles.summaryInfo}>
-              <span style={styles.summaryLabel}>Subtotal</span>
-              <strong style={styles.summaryTotal}>{money(subtotal)}</strong>
+      <section style={styles.panelOuter}>
+        <div style={styles.panelInner}>
+          <div style={styles.stack}>
+            <div style={styles.summaryCard}>
+              <div style={styles.summaryInfo}>
+                <span style={styles.summaryLabel}>Subtotal</span>
+                <strong style={styles.summaryTotal}>{money(subtotal)}</strong>
+              </div>
+              <span style={styles.summaryCount}>{cart.length} articulo(s)</span>
             </div>
-            <span style={styles.summaryCount}>{cart.length} articulo(s)</span>
-          </div>
 
-          {cart.length === 0 ? (
-            <Empty>No hay articulos en esta venta.</Empty>
-          ) : (
-            cart.map((item) => <EditableItem key={item.id} item={item} onChange={onChange} onRemove={onRemove} />)
-          )}
+            {cart.length === 0 ? (
+              <Empty>No hay articulos en esta venta.</Empty>
+            ) : (
+              cart.map((item) => <EditableItem key={item.id} item={item} onChange={onChange} onRemove={onRemove} />)
+            )}
 
-          <button type="button" style={styles.dangerButton} onClick={onClear}>
-            Borrar venta
-          </button>
-          <div style={styles.actions}>
-            <button type="button" style={styles.secondaryButton} onClick={onBack}>
-              Regresar a caja
+            <button type="button" style={styles.dangerButton} onClick={onClear}>
+              Borrar venta
             </button>
-            <button
-              type="button"
-              disabled={!cart.length}
-              style={{ ...styles.totalButton, opacity: cart.length ? 1 : 0.45 }}
-              onClick={onCheckout}
-            >
-              Totalizar
-            </button>
+            <div style={styles.actions}>
+              <button type="button" style={styles.secondaryButton} onClick={onBack}>
+                Regresar a caja
+              </button>
+              <button
+                type="button"
+                disabled={!cart.length}
+                style={{ ...styles.totalButton, opacity: cart.length ? 1 : 0.45 }}
+                onClick={onCheckout}
+              >
+                Totalizar
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -47,18 +49,28 @@ export default function SaleEditor({ city, folio, cart, subtotal, onBack, onChan
 }
 
 const styles = {
-  panel: {
+  panelOuter: {
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
     background: '#ffffff',
     border: '1px solid #111111',
     borderRadius: 30,
-    padding: 16,
+    padding: 0,
     boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)',
     boxSizing: 'border-box',
+    overflow: 'visible'
+  },
+  panelInner: {
+    width: '100%',
     maxWidth: '100%',
     minWidth: 0,
-    overflow: 'hidden'
+    padding: 20,
+    boxSizing: 'border-box'
   },
   stack: {
+    width: '100%',
+    maxWidth: '100%',
     display: 'grid',
     gap: 14,
     minWidth: 0
@@ -68,10 +80,11 @@ const styles = {
     borderRadius: 26,
     background: '#ffffff',
     padding: '18px 18px 16px',
+    width: '100%',
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
     gap: 8,
-    boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)',
+    boxShadow: '0 5px 12px rgba(17, 17, 17, 0.035)',
     boxSizing: 'border-box',
     maxWidth: '100%',
     minWidth: 0
@@ -120,6 +133,7 @@ const styles = {
     boxSizing: 'border-box'
   },
   actions: {
+    width: '100%',
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
     gap: 10,
