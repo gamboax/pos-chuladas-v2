@@ -186,10 +186,16 @@ const styles = {
   panel: {
     padding: 16,
     borderRadius: 28,
-    border: '1px solid rgba(17, 17, 17, 0.84)'
+    border: '1px solid rgba(17, 17, 17, 0.84)',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    overflow: 'hidden'
   },
   stack: {
-    gap: 13
+    gap: 13,
+    minWidth: 0,
+    maxWidth: '100%'
   },
   cameraBox: {
     minHeight: 242,
@@ -198,20 +204,27 @@ const styles = {
     background: '#111111',
     position: 'relative',
     overflow: 'hidden',
-    boxShadow: '0 12px 24px rgba(17, 17, 17, 0.12)'
+    boxShadow: '0 12px 24px rgba(17, 17, 17, 0.12)',
+    boxSizing: 'border-box',
+    width: '100%',
+    maxWidth: '100%'
   },
   video: {
     width: '100%',
     height: 242,
     display: 'block',
     objectFit: 'cover',
-    background: '#111111'
+    background: '#111111',
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   previewImage: {
     width: '100%',
     height: 242,
     display: 'block',
-    objectFit: 'cover'
+    objectFit: 'cover',
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   cameraOverlay: {
     position: 'absolute',
@@ -234,12 +247,17 @@ const styles = {
     display: 'grid',
     gap: 4,
     fontSize: 14,
-    lineHeight: 1.3
+    lineHeight: 1.3,
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0
   },
   cameraActions: {
     display: 'grid',
     gridTemplateColumns: '1fr',
-    gap: 10
+    gap: 10,
+    minWidth: 0,
+    maxWidth: '100%'
   },
   cameraButton: {
     width: '100%',
@@ -248,6 +266,8 @@ const styles = {
     borderRadius: 20,
     background: '#ffffff',
     color: '#111111',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
     fontSize: 16,
     fontWeight: 700,
     transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
@@ -259,6 +279,8 @@ const styles = {
     borderRadius: 20,
     background: '#10B981',
     color: '#ffffff',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
     fontSize: 16,
     fontWeight: 740,
     boxShadow: '0 12px 22px rgba(16, 185, 129, 0.22)',
@@ -272,7 +294,9 @@ const styles = {
     background: '#f7f7f7',
     color: '#111111',
     fontSize: 15,
-    fontWeight: 680
+    fontWeight: 680,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   canvas: {
     display: 'none'
@@ -282,7 +306,10 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+    minWidth: 0,
+    maxWidth: '100%',
     color: '#111111',
-    fontSize: 15
+    fontSize: 15,
+    overflow: 'hidden'
   }
 }

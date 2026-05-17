@@ -10,7 +10,9 @@ const baseHeader = {
   borderRadius: 999,
   padding: '8px 8px 8px 16px',
   boxShadow: '0 10px 24px rgba(17, 17, 17, 0.07)',
-  boxSizing: 'border-box'
+  boxSizing: 'border-box',
+  maxWidth: '100%',
+  minWidth: 0
 }
 
 export default function HeaderBar({
@@ -24,7 +26,7 @@ export default function HeaderBar({
 }) {
   return (
     <header style={baseHeader}>
-      <div>
+      <div style={styles.headerText}>
         <div style={styles.headerTitle}>{title}</div>
         <div style={styles.headerMeta}>{subtitle}</div>
       </div>
@@ -61,19 +63,31 @@ export default function HeaderBar({
 }
 
 const styles = {
+  headerText: {
+    minWidth: 0,
+    overflow: 'hidden',
+    maxWidth: 'calc(100vw - 36px)'
+  },
   headerTitle: {
     fontSize: 16,
     fontWeight: 700,
-    lineHeight: 1.15
+    lineHeight: 1.15,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   headerMeta: {
     color: '#555555',
     fontSize: 14,
     fontWeight: 500,
-    marginTop: 2
+    marginTop: 2,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   menuWrap: {
-    position: 'relative'
+    position: 'relative',
+    flexShrink: 0
   },
   menuButton: {
     width: 43,

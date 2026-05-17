@@ -52,11 +52,16 @@ const styles = {
     border: '1px solid #111111',
     borderRadius: 30,
     padding: 16,
-    boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)'
+    boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    overflow: 'hidden'
   },
   stack: {
     display: 'grid',
-    gap: 14
+    gap: 14,
+    minWidth: 0
   },
   summaryCard: {
     border: '1px solid #111111',
@@ -67,7 +72,11 @@ const styles = {
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 12,
-    boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)'
+    boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    flexWrap: 'wrap'
   },
   summaryLabel: {
     display: 'block',
@@ -94,21 +103,26 @@ const styles = {
   },
   dangerButton: {
     width: '100%',
+    maxWidth: '100%',
     minHeight: 56,
     border: '1px solid #b91c1c',
     borderRadius: 20,
     background: '#fff5f5',
     color: '#b91c1c',
     fontSize: 16,
-    fontWeight: 700
+    fontWeight: 700,
+    boxSizing: 'border-box'
   },
   actions: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 10
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 10,
+    minWidth: 0
   },
   secondaryButton: {
     width: '100%',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     minHeight: 62,
     border: '1px solid #111111',
     borderRadius: 20,
@@ -119,6 +133,8 @@ const styles = {
   },
   totalButton: {
     width: '100%',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     minHeight: 62,
     border: '1px solid #0EA371',
     borderRadius: 20,

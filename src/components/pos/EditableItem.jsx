@@ -5,7 +5,7 @@ export default function EditableItem({ item, onChange, onRemove }) {
   return (
     <article style={styles.item}>
       <div style={styles.itemTop}>
-        <div>
+        <div style={styles.itemInfo}>
           <strong style={styles.itemTitle}>{item.category}</strong>
           <div style={styles.itemMeta}>
             {[item.material, item.code_detected, item.capture_origin === 'scanner' ? 'Escaner' : 'Manual']
@@ -51,40 +51,53 @@ const styles = {
     padding: 14,
     display: 'grid',
     gap: 12,
-    boxShadow: '0 10px 22px rgba(17, 17, 17, 0.06)'
+    boxShadow: '0 10px 22px rgba(17, 17, 17, 0.06)',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    overflow: 'hidden'
   },
   itemTop: {
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 10
+    gap: 10,
+    minWidth: 0
+  },
+  itemInfo: {
+    minWidth: 0
   },
   itemTitle: {
     color: '#111111',
     fontSize: 18,
-    fontWeight: 700
+    fontWeight: 700,
+    overflowWrap: 'anywhere'
   },
   itemMeta: {
     color: '#666666',
     fontSize: 13,
     fontWeight: 500,
-    marginTop: 2
+    marginTop: 2,
+    overflowWrap: 'anywhere'
   },
   itemTotal: {
     color: '#111111',
     fontSize: 18,
     fontWeight: 700,
-    whiteSpace: 'nowrap'
+    whiteSpace: 'nowrap',
+    flexShrink: 0
   },
   editorRow: {
     display: 'grid',
-    gridTemplateColumns: '46px 62px 46px 70px 1fr',
-    gap: 8,
-    alignItems: 'center'
+    gridTemplateColumns: '42px minmax(48px, 1fr) 42px minmax(58px, 1fr)',
+    gap: 7,
+    alignItems: 'center',
+    minWidth: 0,
+    maxWidth: '100%'
   },
   smallButton: {
-    width: 46,
-    height: 46,
+    width: '100%',
+    height: 44,
     border: '1px solid #111111',
     borderRadius: 16,
     background: '#111111',
@@ -93,7 +106,9 @@ const styles = {
     fontWeight: 700
   },
   deleteButton: {
-    height: 46,
+    gridColumn: '1 / -1',
+    width: '100%',
+    height: 44,
     border: '1px solid #b91c1c',
     borderRadius: 16,
     background: '#fff5f5',

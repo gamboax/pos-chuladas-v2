@@ -528,14 +528,14 @@ function roleLabel(role) {
 }
 
 const styles = {
-  page: { minHeight: '100dvh', background: '#f4f4f4', color: '#111111', fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: 'calc(18px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))', boxSizing: 'border-box' },
-  shell: { width: '100%', maxWidth: 430, margin: '0 auto' },
+  page: { minHeight: '100dvh', background: '#f4f4f4', color: '#111111', fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: 'calc(18px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))', boxSizing: 'border-box', overflowX: 'hidden' },
+  shell: { width: '100%', maxWidth: 430, minWidth: 0, margin: '0 auto', boxSizing: 'border-box' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, background: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.84)', borderRadius: 999, padding: '8px 8px 8px 16px', boxShadow: '0 10px 24px rgba(17, 17, 17, 0.06)' },
   headerTitle: { fontSize: 16, fontWeight: 700, lineHeight: 1.15 },
   headerMeta: { color: '#555555', fontSize: 14, fontWeight: 500, marginTop: 2 },
   blackPill: { minWidth: 74, height: 48, border: 'none', borderRadius: 999, background: '#111111', color: '#ffffff', fontSize: 15, fontWeight: 700, transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' },
-  panel: { background: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.8)', borderRadius: 28, padding: 16, boxShadow: '0 14px 30px rgba(17, 17, 17, 0.06)', boxSizing: 'border-box' },
-  stack: { display: 'grid', gap: 15 },
+  panel: { background: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.8)', borderRadius: 28, padding: 16, boxShadow: '0 14px 30px rgba(17, 17, 17, 0.06)', boxSizing: 'border-box', maxWidth: '100%', minWidth: 0, overflow: 'hidden' },
+  stack: { display: 'grid', gap: 15, minWidth: 0 },
   heroBlock: { display: 'grid', gap: 4 },
   kicker: { margin: 0, color: '#666666', fontSize: 13, fontWeight: 700, textTransform: 'uppercase' },
   title: { margin: 0, color: '#111111', fontSize: 40, lineHeight: 1, fontWeight: 700, letterSpacing: 0 },
@@ -544,8 +544,8 @@ const styles = {
   sectionHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   sectionTitle: { margin: 0, fontSize: 18, fontWeight: 720 },
   chip: { border: '1px solid #d7d7d7', borderRadius: 999, padding: '6px 10px', background: '#f7f7f7', color: '#555555', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' },
-  grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  metricCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 13, display: 'grid', gap: 5, boxShadow: '0 7px 16px rgba(17, 17, 17, 0.035)' },
+  grid: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, minWidth: 0 },
+  metricCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 13, display: 'grid', gap: 5, boxShadow: '0 7px 16px rgba(17, 17, 17, 0.035)', minWidth: 0, overflow: 'hidden' },
   dataRow: { display: 'flex', justifyContent: 'space-between', gap: 10, padding: '11px 0', borderTop: '1px solid #eeeeee', fontSize: 15, color: '#333333' },
   ticketRow: { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '12px 0', borderTop: '1px solid #eeeeee', fontSize: 14 },
   ticketRight: { display: 'grid', justifyItems: 'end', gap: 3, whiteSpace: 'nowrap' },
@@ -553,12 +553,12 @@ const styles = {
   error: { border: '1px solid #fecaca', borderRadius: 18, background: '#fff5f5', color: '#991b1b', padding: 12, fontSize: 14, fontWeight: 700, textAlign: 'center' },
   empty: { border: '1px dashed #a3a3a3', borderRadius: 18, background: '#f7f7f7', color: '#555555', padding: 18, textAlign: 'center', fontSize: 15, fontWeight: 560 },
   labelBlock: { display: 'grid', gap: 7, color: '#333333', fontSize: 14, fontWeight: 700 },
-  input: { width: '100%', minHeight: 54, border: '1px solid rgba(17, 17, 17, 0.86)', borderRadius: 18, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 540, padding: '0 13px', boxSizing: 'border-box', transition: 'border-color 140ms ease, box-shadow 140ms ease' },
-  textarea: { width: '100%', minHeight: 84, border: '1px solid rgba(17, 17, 17, 0.86)', borderRadius: 18, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 540, padding: 13, boxSizing: 'border-box', resize: 'vertical' },
-  twoColumns: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9 },
-  threeColumns: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 },
-  primaryButton: { width: '100%', minHeight: 58, border: '1px solid #0EA371', borderRadius: 20, background: '#10B981', color: '#ffffff', fontSize: 16, fontWeight: 720, boxShadow: '0 12px 22px rgba(16, 185, 129, 0.18)', transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' },
-  secondaryButton: { width: '100%', minHeight: 56, border: '1px solid #111111', borderRadius: 20, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 720, transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' }
+  input: { width: '100%', maxWidth: '100%', minWidth: 0, minHeight: 54, border: '1px solid rgba(17, 17, 17, 0.86)', borderRadius: 18, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 540, padding: '0 13px', boxSizing: 'border-box', transition: 'border-color 140ms ease, box-shadow 140ms ease' },
+  textarea: { width: '100%', maxWidth: '100%', minWidth: 0, minHeight: 84, border: '1px solid rgba(17, 17, 17, 0.86)', borderRadius: 18, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 540, padding: 13, boxSizing: 'border-box', resize: 'vertical' },
+  twoColumns: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 9, minWidth: 0 },
+  threeColumns: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)', gap: 8, minWidth: 0 },
+  primaryButton: { width: '100%', maxWidth: '100%', boxSizing: 'border-box', minHeight: 58, border: '1px solid #0EA371', borderRadius: 20, background: '#10B981', color: '#ffffff', fontSize: 16, fontWeight: 720, boxShadow: '0 12px 22px rgba(16, 185, 129, 0.18)', transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' },
+  secondaryButton: { width: '100%', maxWidth: '100%', boxSizing: 'border-box', minHeight: 56, border: '1px solid #111111', borderRadius: 20, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 720, transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' }
 }
 
 export default AdminDashboard

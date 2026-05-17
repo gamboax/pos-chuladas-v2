@@ -139,7 +139,9 @@ export const styles = {
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     padding: 'calc(19px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))',
     boxSizing: 'border-box',
-    textAlign: 'left'
+    textAlign: 'left',
+    overflowX: 'hidden',
+    width: '100%'
   },
   centeredPage: {
     display: 'grid',
@@ -150,7 +152,9 @@ export const styles = {
   shell: {
     width: '100%',
     maxWidth: 430,
-    margin: '0 auto'
+    minWidth: 0,
+    margin: '0 auto',
+    boxSizing: 'border-box'
   },
   panel: {
     background: '#ffffff',
@@ -158,16 +162,23 @@ export const styles = {
     borderRadius: 28,
     padding: 18,
     boxShadow: '0 14px 30px rgba(17, 17, 17, 0.06)',
-    boxSizing: 'border-box'
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    overflow: 'hidden'
   },
   stack: {
     display: 'grid',
-    gap: 16
+    gap: 16,
+    minWidth: 0,
+    maxWidth: '100%'
   },
   topBar: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
+    minWidth: 0,
+    maxWidth: '100%',
     marginBottom: 13,
     paddingTop: 2
   },
@@ -180,7 +191,8 @@ export const styles = {
     color: '#111111',
     fontSize: 15,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    flexShrink: 0
   },
   topTitle: {
     fontSize: 20,
@@ -223,7 +235,9 @@ export const styles = {
     fontSize: 17,
     fontWeight: 730,
     boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)',
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
   },
   successButton: {
     width: '100%',
@@ -235,7 +249,9 @@ export const styles = {
     fontSize: 17,
     fontWeight: 730,
     boxShadow: `0 12px 22px ${SUCCESS_SHADOW}`,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
   },
   secondaryButton: {
     width: '100%',
@@ -246,7 +262,9 @@ export const styles = {
     color: '#111111',
     fontSize: 16,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
   },
   dangerButton: {
     width: '100%',
@@ -257,10 +275,14 @@ export const styles = {
     color: '#b91c1c',
     fontSize: 16,
     fontWeight: 700,
-    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
   },
   textInput: {
     width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
     minHeight: 58,
     border: '1px solid #111111',
     borderRadius: 20,
@@ -274,6 +296,8 @@ export const styles = {
   },
   compactInput: {
     width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
     height: 46,
     border: '1px solid #111111',
     borderRadius: 16,
@@ -285,6 +309,8 @@ export const styles = {
     boxSizing: 'border-box'
   },
   choiceButton: {
+    minWidth: 0,
+    maxWidth: '100%',
     minHeight: 52,
     border: '1px solid #d7d7d7',
     borderRadius: 18,
@@ -293,6 +319,7 @@ export const styles = {
     transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   summaryLine: {
+    minWidth: 0,
     display: 'flex',
     justifyContent: 'space-between',
     gap: 10,
@@ -318,15 +345,20 @@ export const styles = {
   },
   twoColumns: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 10
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 10,
+    minWidth: 0
   },
   threeColumns: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr',
-    gap: 8
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 8,
+    minWidth: 0
   },
   summaryBox: {
+    maxWidth: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
     border: '1px solid #d9d9d9',
     borderRadius: 22,
     background: '#ffffff',
@@ -335,6 +367,8 @@ export const styles = {
     gap: 10
   },
   summaryTotal: {
+    minWidth: 0,
+    flexWrap: 'wrap',
     borderTop: '1px solid #d7d7d7',
     paddingTop: 12,
     display: 'flex',
@@ -364,6 +398,8 @@ export const styles = {
     fontSize: 14
   },
   ticketBox: {
+    maxWidth: '100%',
+    boxSizing: 'border-box',
     margin: 0,
     maxHeight: 360,
     overflow: 'auto',

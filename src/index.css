@@ -23,8 +23,21 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 html {
@@ -36,6 +49,7 @@ body {
   min-width: 320px;
   background: #f4f4f4;
   overscroll-behavior-y: none;
+  overflow-x: hidden;
 }
 
 #root {
@@ -47,12 +61,14 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 button,
 input,
 select,
 textarea {
+  max-width: 100%;
   font: inherit;
 }
 

@@ -554,7 +554,9 @@ const styles = {
   cityPanel: {
     borderRadius: 34,
     padding: '28px 24px 24px',
-    boxShadow: '0 18px 38px rgba(17, 17, 17, 0.075)'
+    boxShadow: '0 18px 38px rgba(17, 17, 17, 0.075)',
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   cityStack: {
     gap: 20
@@ -573,7 +575,10 @@ const styles = {
   cashierPanel: {
     padding: 18,
     borderRadius: 30,
-    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.065)'
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.065)',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflow: 'hidden'
   },
   feedback: {
     border: '1px solid #0EA371',
@@ -588,6 +593,7 @@ const styles = {
   },
   scannerButton: {
     width: '100%',
+    maxWidth: '100%',
     minHeight: 64,
     border: '1px solid #111111',
     borderRadius: 24,
@@ -600,11 +606,13 @@ const styles = {
   },
   bottomActions: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr',
-    gap: 10
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 8,
+    minWidth: 0
   },
   bottomButton: {
     width: '100%',
+    maxWidth: '100%',
     minHeight: 56,
     border: '1px solid #111111',
     borderRadius: 18,
@@ -617,6 +625,7 @@ const styles = {
   },
   totalButton: {
     width: '100%',
+    maxWidth: '100%',
     minHeight: 56,
     border: '1px solid #0EA371',
     borderRadius: 18,
