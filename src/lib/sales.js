@@ -62,8 +62,8 @@ export async function saveSale(sale) {
   }
 }
 
-export async function fetchTodaySalesSummary() {
-  const result = await fetchTodayAdminData()
+export async function fetchTodaySalesSummary(filters = {}) {
+  const result = await fetchTodayAdminData(filters)
   return {
     storage: result.storage,
     reason: result.reason,
@@ -71,12 +71,18 @@ export async function fetchTodaySalesSummary() {
   }
 }
 
-export async function fetchTodayAdminData() {
+export async function fetchTodayAdminData(filters = {}) {
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+
   if (!hasSupabaseConfig || !supabase) {
+    const localSales = readLocalSales()
+      .filter(isTodaySale)
+      .filter((sale) => matchesCity(sale, cityFilter))
+
     return {
       storage: 'local',
       reason: 'Supabase no esta configurado en este entorno.',
-      sales: readLocalSales().filter(isTodaySale),
+      sales: localSales,
       expenses: [],
       cashCuts: []
     }
@@ -86,27 +92,36 @@ export async function fetchTodayAdminData() {
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
 
-  const [salesResult, expensesResult, cashCutsResult] = await Promise.all([
-    supabase
-      .from('sales')
-      .select('id, total, payment_method, created_at')
-      .gte('created_at', start.toISOString())
-      .lt('created_at', end.toISOString())
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('expenses')
-      .select('id, city, category, description, amount, payment_method, created_at')
-      .gte('created_at', start.toISOString())
-      .lt('created_at', end.toISOString())
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('cash_cuts')
-      .select('id, city, cashier_name, total_sales, expected_cash, cash_counted, transfer_total, card_total, cash_expenses, difference, notes, created_at')
-      .gte('created_at', start.toISOString())
-      .lt('created_at', end.toISOString())
-      .order('created_at', { ascending: false })
-      .limit(5)
-  ])
+  let salesQuery = supabase
+    .from('sales')
+    .select('id, folio, city, cashier_name, subtotal, discount_amount, total, payment_method, customer_name, customer_whatsapp, customer_type, created_at')
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString())
+    .order('created_at', { ascending: false })
+
+  let expensesQuery = supabase
+    .from('expenses')
+    .select('id, city, category, description, amount, payment_method, created_at')
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString())
+    .order('created_at', { ascending: false })
+
+  let cashCutsQuery = supabase
+    .from('cash_cuts')
+    .select('id, city, cashier_name, total_sales, expected_cash, cash_counted, transfer_total, card_total, cash_expenses, difference, notes, created_at')
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString())
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  if (cityFilter?.trim()) {
+    const city = cityFilter.trim()
+    salesQuery = salesQuery.ilike('city', city)
+    expensesQuery = expensesQuery.ilike('city', city)
+    cashCutsQuery = cashCutsQuery.ilike('city', city)
+  }
+
+  const [salesResult, expensesResult, cashCutsResult] = await Promise.all([salesQuery, expensesQuery, cashCutsQuery])
 
   if (salesResult.error) {
     console.error('[Supabase fetchTodayAdminData] sales select failed:', salesResult.error)
@@ -114,7 +129,7 @@ export async function fetchTodayAdminData() {
       return {
         storage: 'local',
         reason: 'La tabla sales no existe o no esta expuesta en Supabase.',
-        sales: readLocalSales().filter(isTodaySale),
+        sales: readLocalSales().filter(isTodaySale).filter((sale) => matchesCity(sale, cityFilter)),
         expenses: [],
         cashCuts: []
       }
@@ -136,12 +151,12 @@ export async function fetchTodayAdminData() {
   return {
     storage: 'supabase',
     reason: expensesResult.error || cashCutsResult.error ? 'Faltan tablas de gastos/cortes. Ejecuta el ALTER puntual de Supabase.' : '',
+    city: cityFilter || '',
     sales: salesResult.data || [],
     expenses: expensesResult.error ? [] : expensesResult.data || [],
     cashCuts: cashCutsResult.error ? [] : cashCutsResult.data || []
   }
 }
-
 export async function fetchInventoryData() {
   if (!hasSupabaseConfig || !supabase) {
     return {
@@ -603,6 +618,11 @@ function readLocalSales() {
   } catch {
     return []
   }
+}
+
+function matchesCity(row, city) {
+  if (!city?.trim()) return true
+  return String(row.city || '').trim().toLowerCase() === city.trim().toLowerCase()
 }
 
 function isTodaySale(sale) {
