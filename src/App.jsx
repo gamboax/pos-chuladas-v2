@@ -3,8 +3,8 @@ import AdminDashboard from './components/admin/AdminDashboard'
 import CashierPOS from './components/CashierPOS'
 import Login from './components/Login'
 
-const CASHIER_ROLES = new Set(['cashier', 'admin', 'super_admin'])
-const ADMIN_ROLES = new Set(['admin', 'super_admin'])
+const CASHIER_ROLES = new Set(['cashier', 'manager', 'admin_operativo', 'admin', 'super_admin'])
+const ADMIN_ROLES = new Set(['manager', 'admin_operativo', 'admin', 'super_admin'])
 
 function App() {
   const [user, setUser] = useState(null)

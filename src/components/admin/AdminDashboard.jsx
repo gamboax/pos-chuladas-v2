@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   fetchInventoryData,
   fetchTodayAdminData,
@@ -9,7 +9,7 @@ import {
 } from '../../lib/sales'
 import { money } from '../../lib/ticket'
 
-const EXPENSE_CATEGORIES = ['Facebook Ads', 'Gasolina', 'Casetas', 'Comida', 'Hotel', 'Ayudantes', 'Lugar/Renta', 'Mercancia', 'Otros']
+const EXPENSE_CATEGORIES = ['Renta del lugar', 'Gasolina', 'Comida', 'Pago de colaborador', 'Casetas', 'Otros']
 const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete']
 const MATERIALS = ['Acero inoxidable', 'Oro laminado', 'Bano de rodio', 'Bano de plata']
 
@@ -17,12 +17,14 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const role = user?.role || 'admin'
   const isSuperAdmin = role === 'super_admin'
   const isInvestor = role === 'investor'
-  const canManageOps = isSuperAdmin
+  const isManager = ['manager', 'admin_operativo', 'admin'].includes(role)
+  const canManageOps = isManager || isSuperAdmin
   const defaultCity = readActiveCityDraft()
 
   const [summary, setSummary] = useState({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
   const [inventory, setInventory] = useState({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
   const [eventCity, setEventCity] = useState(defaultCity)
+  const [selectedTicket, setSelectedTicket] = useState(null)
   const [ticketSearch, setTicketSearch] = useState('')
   const [expenseForm, setExpenseForm] = useState({ category: EXPENSE_CATEGORIES[0], description: '', amount: '' })
   const [cashCounted, setCashCounted] = useState('')
@@ -265,6 +267,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <Metric label="Efectivo" value={money(metrics.cashSales)} />
                 <Metric label="Transfer/Tarjeta" value={money(metrics.transferTotal + metrics.cardTotal)} />
                 {(isSuperAdmin || isInvestor) && <Metric label="Utilidad est." value={money(inventoryMetrics.operatingProfit)} />}
+                {canManageOps && !isSuperAdmin && <Metric label="Utilidad bruta" value={money(metrics.grossProfit)} />}
+                {canManageOps && !isSuperAdmin && <Metric label="Utilidad neta" value={money(metrics.netProfit)} />}
                 {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={`${inventoryMetrics.roi.toFixed(1)}%`} />}
               </div>
             </section>
@@ -289,9 +293,37 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               {visibleTickets.length === 0 ? (
                 <div style={styles.empty}>No hay tickets para mostrar.</div>
               ) : (
-                visibleTickets.slice(0, 8).map((sale) => <TicketRow key={sale.id} sale={sale} />)
+                visibleTickets.slice(0, 8).map((sale) => <TicketRow key={sale.id} sale={sale} onSelect={setSelectedTicket} />)
               )}
+              {selectedTicket && <TicketDetail sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
             </section>
+            {canManageOps && !isSuperAdmin && (
+              <>
+                <section style={styles.cleanSection}>
+                  <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Gastos del evento</h2><span style={styles.chip}>{cityLabel}</span></div>
+                  <select value={expenseForm.category} onChange={(event) => setExpenseForm((current) => ({ ...current, category: event.target.value }))} style={styles.input}>{EXPENSE_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
+                  <input value={expenseForm.description} onChange={(event) => setExpenseForm((current) => ({ ...current, description: event.target.value }))} placeholder="Descripcion" style={styles.input} />
+                  <input value={expenseForm.amount} onChange={(event) => setExpenseForm((current) => ({ ...current, amount: event.target.value }))} placeholder="Monto" inputMode="decimal" type="number" min="0" style={styles.input} />
+                  <button type="button" style={styles.primaryButton} disabled={savingExpense} onClick={handleSaveExpense}>{savingExpense ? 'Guardando...' : 'Guardar gasto'}</button>
+                  <DataRow label="Gastos del evento" value={money(metrics.totalExpenses)} strong />
+                  <DataRow label="Utilidad neta est." value={money(metrics.netProfit)} strong />
+                  {summary.expenses.slice(0, 4).map((expense) => <DataRow key={expense.id} label={`${expense.category} / ${expense.description}`} value={money(expense.amount)} />)}
+                </section>
+
+                <section style={styles.cleanSection}>
+                  <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Corte de caja</h2><span style={styles.chip}>{cityLabel}</span></div>
+                  <DataRow label="Venta total sistema" value={money(metrics.totalSold)} />
+                  <DataRow label="Efectivo esperado" value={money(metrics.expectedCash)} />
+                  <label style={styles.labelBlock}>Efectivo contado<input value={cashCounted} onChange={(event) => setCashCounted(event.target.value)} type="number" inputMode="decimal" min="0" style={styles.input} /></label>
+                  <DataRow label="Transferencias" value={money(metrics.transferTotal)} />
+                  <DataRow label="Tarjeta" value={money(metrics.cardTotal)} />
+                  <DataRow label="Gastos en efectivo" value={money(metrics.cashExpenses)} />
+                  <DataRow label="Diferencia" value={money(cutDifference)} strong />
+                  <textarea value={cashCutNotes} onChange={(event) => setCashCutNotes(event.target.value)} placeholder="Notas del corte" style={styles.textarea} />
+                  <button type="button" style={styles.primaryButton} disabled={savingCashCut} onClick={handleSaveCashCut}>{savingCashCut ? 'Guardando...' : 'Guardar corte'}</button>
+                </section>
+              </>
+            )}
 
             {(isSuperAdmin || isInvestor) && (
               <section style={styles.cleanSection}>
@@ -392,22 +424,35 @@ function DataRow({ label, value, strong = false }) {
   )
 }
 
-function TicketRow({ sale }) {
+function TicketRow({ sale, onSelect }) {
   const time = sale.created_at ? new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''
   return (
-    <div style={styles.ticketRow}>
-      <div>
+    <button type="button" style={styles.ticketRow} onClick={() => onSelect?.(sale)}>
+      <span style={styles.ticketInfo}>
         <strong>{sale.folio || 'Sin folio'}</strong>
-        <span>{sale.customer_name || sale.cashier_name || 'Venta'} / {sale.payment_method || 'Pago'}</span>
-      </div>
-      <div style={styles.ticketRight}>
+        <small>{sale.customer_name || sale.cashier_name || 'Venta'} / {sale.payment_method || 'Pago'}</small>
+      </span>
+      <span style={styles.ticketRight}>
         <strong>{money(sale.total)}</strong>
-        <span>{time}</span>
-      </div>
-    </div>
+        <small>{time}</small>
+      </span>
+    </button>
   )
 }
 
+function TicketDetail({ sale, onClose }) {
+  return (
+    <section style={styles.detailBox}>
+      <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Detalle ticket</h2><button type="button" style={styles.linkButton} onClick={onClose}>Cerrar</button></div>
+      <DataRow label="Folio" value={sale.folio || 'Sin folio'} />
+      <DataRow label="Total" value={money(sale.total)} strong />
+      <DataRow label="Pago" value={sale.payment_method || 'Sin metodo'} />
+      <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
+      <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
+      <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
+    </section>
+  )
+}
 function buildMetrics(sales, expenses, cashCuts) {
   const salesCount = sales.length
   const totalSold = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
@@ -426,8 +471,11 @@ function buildMetrics(sales, expenses, cashCuts) {
   const expectedCash = cashSales - cashExpenses
   const latestDifference = cashCuts.length ? Number(cashCuts[0].difference || 0) : 0
   const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
+  const estimatedCost = totalSold / 3
+  const grossProfit = totalSold - estimatedCost
+  const netProfit = grossProfit - totalExpenses
 
-  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedProfit: totalSold - totalExpenses, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured }
+  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured }
 }
 
 function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
@@ -461,9 +509,10 @@ function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
     const quantity = Number(saleItem.quantity || 0)
     const codeRow = codeByValue.get(code)
     const relatedItem = itemById.get(codeRow?.purchase_lot_item_id) || itemByCode.get(code)
-    const suggestedPrice = Number(relatedItem?.suggested_price || codeRow?.suggested_price || saleItem.unit_price || 0)
-    const unitCost = Number(relatedItem?.unit_cost || codeRow?.unit_cost || 0)
-    const subtotal = Number(saleItem.subtotal || quantity * Number(saleItem.unit_price || 0))
+    const unitPrice = Number(saleItem.unit_price || 0)
+    const subtotal = Number(saleItem.subtotal || quantity * unitPrice)
+    const suggestedPrice = Number(relatedItem?.suggested_price || codeRow?.suggested_price || unitPrice || 0)
+    const unitCost = Number(relatedItem?.unit_cost || codeRow?.unit_cost || saleItem.unit_cost || 0) || (unitPrice || subtotal / Math.max(quantity, 1)) / 3
     quantitySold += quantity
     estimatedRevenue += quantity * suggestedPrice
     actualRevenue += subtotal
@@ -538,8 +587,11 @@ const styles = {
   grid: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, minWidth: 0 },
   metricCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 13, display: 'grid', gap: 5, boxShadow: '0 7px 16px rgba(17, 17, 17, 0.035)', minWidth: 0, overflow: 'hidden' },
   dataRow: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, padding: '11px 0', borderTop: '1px solid #eeeeee', fontSize: 15, color: '#333333', minWidth: 0, overflowWrap: 'anywhere' },
-  ticketRow: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 12, padding: '12px 0', borderTop: '1px solid #eeeeee', fontSize: 14, minWidth: 0 },
+  ticketRow: { width: '100%', maxWidth: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 12, padding: '12px 0', border: 'none', borderTop: '1px solid #eeeeee', background: 'transparent', fontSize: 14, minWidth: 0, textAlign: 'left', boxSizing: 'border-box' },
+  ticketInfo: { display: 'grid', gap: 3, minWidth: 0, overflow: 'hidden' },
   ticketRight: { display: 'grid', justifyItems: 'end', gap: 3, minWidth: 0, overflowWrap: 'anywhere', textAlign: 'right' },
+  detailBox: { border: '1px solid #111111', borderRadius: 20, padding: 14, display: 'grid', gap: 4, minWidth: 0, boxSizing: 'border-box' },
+  linkButton: { border: 'none', background: 'transparent', color: '#0EA371', fontSize: 14, fontWeight: 760 },
   notice: { border: '1px solid #0EA371', borderRadius: 18, background: '#DFF8EC', color: '#064E3B', padding: 12, fontSize: 14, fontWeight: 700, textAlign: 'center' },
   error: { border: '1px solid #fecaca', borderRadius: 18, background: '#fff5f5', color: '#991b1b', padding: 12, fontSize: 14, fontWeight: 700, textAlign: 'center' },
   empty: { border: '1px dashed #a3a3a3', borderRadius: 18, background: '#f7f7f7', color: '#555555', padding: 18, textAlign: 'center', fontSize: 15, fontWeight: 560 },

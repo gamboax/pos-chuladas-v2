@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { saveSale } from '../lib/sales'
-import { buildTicket } from '../lib/ticket'
+import { fetchTodayAdminData, saveSale } from '../lib/sales'
+import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
 import CheckoutPanel from './pos/CheckoutPanel'
@@ -76,10 +76,14 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [lastSale, setLastSale] = useState(null)
   const [isSavingSale, setIsSavingSale] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [summaryData, setSummaryData] = useState({ storage: 'supabase', sales: [] })
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState('')
+  const [selectedSummaryTicket, setSelectedSummaryTicket] = useState(null)
 
   const cashierName = user?.name || 'Cajera'
   const cashierId = user?.id || user?.user_id || null
-  const canSeeAdmin = user?.role === 'admin' || user?.role === 'super_admin'
+  const canSeeAdmin = ['manager', 'admin_operativo', 'admin', 'super_admin'].includes(user?.role)
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0), [cart])
   const discountPercent = discountMode === 'custom' ? Number(customDiscount) || 0 : Number(discountMode)
   const safeDiscountPercent = Math.max(0, Math.min(100, discountPercent))
@@ -105,6 +109,33 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   }, [screen, activeCity, folio, cart, discountMode, customDiscount, paymentMethod, customerName, customerPhone, customerType])
 
   useEffect(() => {
+    if (screen !== 'summary' || !activeCity) return
+
+    let alive = true
+    const timeout = window.setTimeout(() => {
+      setSummaryLoading(true)
+      setSummaryError('')
+
+      fetchTodayAdminData({ city: activeCity })
+        .then((result) => {
+          if (!alive) return
+          setSummaryData({ storage: result.storage, reason: result.reason, sales: result.sales || [] })
+        })
+        .catch((error) => {
+          if (alive) setSummaryError(error.message || 'No se pudo cargar el resumen del dia.')
+        })
+        .finally(() => {
+          if (alive) setSummaryLoading(false)
+        })
+    }, 0)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timeout)
+    }
+  }, [screen, activeCity])
+
+  useEffect(() => {
     if (!feedback) return
 
     const timeout = window.setTimeout(() => setFeedback(''), 1200)
@@ -127,6 +158,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     setMenuOpen(false)
     clearDraft()
     resetSale({ keepCity: false })
+    setSelectedSummaryTicket(null)
     setScreen('city')
   }
 
@@ -389,6 +421,19 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         />
       )}
 
+      {screen === 'summary' && (
+        <CashierDaySummaryView
+          cashierName={cashierName}
+          city={activeCity}
+          data={summaryData}
+          loading={summaryLoading}
+          error={summaryError}
+          selectedTicket={selectedSummaryTicket}
+          onSelectTicket={setSelectedSummaryTicket}
+          onBack={() => setScreen('cashier')}
+        />
+      )}
+
       {screen === 'checkout' && (
         <CheckoutPanel
           folio={folio}
@@ -478,6 +523,109 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   )
 }
 
+function CashierDaySummaryView({ cashierName, city, data, loading, error, selectedTicket, onSelectTicket, onBack }) {
+  const metrics = useMemo(() => buildCashierMetrics(data.sales || []), [data.sales])
+  const visibleTickets = (data.sales || []).slice(0, 8)
+
+  return (
+    <>
+      <HeaderBar title="Resumen del dia" subtitle={`${cashierName} / ${city}`} actionLabel="Caja" onAction={onBack} />
+
+      <Panel style={styles.summaryPanel}>
+        <div style={styles.summaryStack}>
+          <div style={styles.summaryHero}>
+            <Kicker>Evento activo</Kicker>
+            <div style={styles.summaryCity}>{city}</div>
+            <div style={styles.summaryTotal}>{money(metrics.totalSold)}</div>
+            <Muted>{metrics.salesCount} ticket(s) / Promedio {money(metrics.averageTicket)}</Muted>
+          </div>
+
+          {loading && <div style={styles.summaryNotice}>Actualizando resumen...</div>}
+          {error && <div style={styles.summaryError}>{error}</div>}
+          {data.reason && !loading && <div style={styles.summaryNotice}>{data.reason}</div>}
+
+          <div style={styles.summaryGrid}>
+            <SummaryMetric label="Ventas" value={metrics.salesCount} />
+            <SummaryMetric label="Clientes" value={metrics.customersCaptured} />
+            <SummaryMetric label="Efectivo" value={money(metrics.cashSales)} />
+            <SummaryMetric label="Tarj/Trans" value={money(metrics.cardTransfer)} />
+          </div>
+
+          <section style={styles.summarySection}>
+            <div style={styles.summaryHead}>
+              <h2 style={styles.summaryTitle}>Tickets recientes</h2>
+              <span style={styles.summaryChip}>{visibleTickets.length}</span>
+            </div>
+
+            {visibleTickets.length === 0 ? (
+              <div style={styles.summaryEmpty}>Aun no hay operaciones en esta ciudad.</div>
+            ) : (
+              visibleTickets.map((sale) => (
+                <button key={sale.id || sale.folio} type="button" style={styles.summaryTicket} onClick={() => onSelectTicket(sale)}>
+                  <span style={styles.summaryTicketInfo}>
+                    <strong>{sale.folio || 'Sin folio'}</strong>
+                    <small>{sale.customer_name || sale.cashier_name || 'Venta'} / {sale.payment_method || 'Pago'}</small>
+                  </span>
+                  <span style={styles.summaryTicketAmount}>{money(sale.total)}</span>
+                </button>
+              ))
+            )}
+          </section>
+
+          {selectedTicket && (
+            <section style={styles.summaryDetail}>
+              <div style={styles.summaryHead}>
+                <h2 style={styles.summaryTitle}>Detalle ticket</h2>
+                <button type="button" style={styles.summaryLink} onClick={() => onSelectTicket(null)}>Cerrar</button>
+              </div>
+              <div style={styles.summaryDetailRows}>
+                <SummaryDataRow label="Folio" value={selectedTicket.folio || 'Sin folio'} />
+                <SummaryDataRow label="Total" value={money(selectedTicket.total)} />
+                <SummaryDataRow label="Pago" value={selectedTicket.payment_method || 'Sin metodo'} />
+                <SummaryDataRow label="Cliente" value={selectedTicket.customer_name || 'Sin cliente'} />
+                <SummaryDataRow label="Hora" value={ticketTime(selectedTicket)} />
+              </div>
+            </section>
+          )}
+        </div>
+      </Panel>
+    </>
+  )
+}
+
+function SummaryMetric({ label, value }) {
+  return (
+    <div style={styles.summaryMetric}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function SummaryDataRow({ label, value }) {
+  return (
+    <div style={styles.summaryDataRow}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function buildCashierMetrics(sales) {
+  const salesCount = sales.length
+  const totalSold = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+  const averageTicket = salesCount ? totalSold / salesCount : 0
+  const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
+  const cashSales = sales.filter((sale) => sale.payment_method === 'Efectivo').reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+  const cardTransfer = sales.filter((sale) => ['Transferencia', 'Tarjeta', 'Mixto'].includes(sale.payment_method)).reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+
+  return { salesCount, totalSold, averageTicket, customersCaptured, cashSales, cardTransfer }
+}
+
+function ticketTime(sale) {
+  if (!sale.created_at) return 'Sin hora'
+  return new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+}
 function getScannerExamples() {
   return SCANNER_EXAMPLES.map((item) => ({ ...item }))
 }
@@ -513,12 +661,12 @@ function buildMenuItems({ setScreen, changeCity, onLogout, canSeeAdmin, onOpenAd
 
   return [
     { label: 'Caja', onClick: () => closeTo('cashier') },
-    { label: 'Venta', onClick: () => closeTo('sale') },
+    { label: 'Resumen del dia', onClick: () => closeTo('summary') },
     { label: 'Cambiar ciudad', onClick: changeCity },
     ...(canSeeAdmin
       ? [
           {
-            label: 'Dashboard',
+            label: 'Dashboard operativo',
             onClick: () => {
               setMenuOpen(false)
               onOpenAdmin?.()
@@ -622,6 +770,166 @@ const styles = {
     fontWeight: 680,
     boxShadow: '0 8px 16px rgba(17, 17, 17, 0.04)',
     transition: 'transform 140ms ease, opacity 140ms ease'
+  },
+  summaryPanel: {
+    padding: 18,
+    borderRadius: 30,
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.065)',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflow: 'hidden'
+  },
+  summaryStack: {
+    display: 'grid',
+    gap: 14,
+    minWidth: 0
+  },
+  summaryHero: {
+    display: 'grid',
+    gap: 6,
+    minWidth: 0
+  },
+  summaryCity: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: '#111111',
+    overflowWrap: 'anywhere'
+  },
+  summaryTotal: {
+    fontSize: 44,
+    lineHeight: 1,
+    fontWeight: 720,
+    color: '#111111'
+  },
+  summaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 9,
+    minWidth: 0
+  },
+  summaryMetric: {
+    border: '1px solid #e7e7e7',
+    borderRadius: 18,
+    background: '#fbfbfb',
+    padding: 12,
+    display: 'grid',
+    gap: 4,
+    minWidth: 0
+  },
+  summarySection: {
+    display: 'grid',
+    gap: 9,
+    minWidth: 0
+  },
+  summaryHead: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    minWidth: 0
+  },
+  summaryTitle: {
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 720
+  },
+  summaryChip: {
+    border: '1px solid #d7d7d7',
+    borderRadius: 999,
+    padding: '5px 9px',
+    background: '#f7f7f7',
+    color: '#555555',
+    fontSize: 12,
+    fontWeight: 700
+  },
+  summaryTicket: {
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    minHeight: 58,
+    border: '1px solid #eeeeee',
+    borderRadius: 18,
+    background: '#ffffff',
+    padding: '10px 12px',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: 10,
+    alignItems: 'center',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  summaryTicketInfo: {
+    display: 'grid',
+    gap: 3,
+    minWidth: 0,
+    overflow: 'hidden'
+  },
+  summaryTicketAmount: {
+    fontSize: 16,
+    fontWeight: 760,
+    color: '#111111',
+    whiteSpace: 'nowrap'
+  },
+  summaryDetail: {
+    border: '1px solid #111111',
+    borderRadius: 22,
+    padding: 14,
+    display: 'grid',
+    gap: 8,
+    minWidth: 0,
+    boxSizing: 'border-box'
+  },
+  summaryDetailRows: {
+    display: 'grid',
+    gap: 2,
+    minWidth: 0
+  },
+  summaryDataRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)',
+    gap: 10,
+    padding: '9px 0',
+    borderTop: '1px solid #eeeeee',
+    fontSize: 14,
+    minWidth: 0,
+    overflowWrap: 'anywhere'
+  },
+  summaryLink: {
+    border: 'none',
+    background: 'transparent',
+    color: '#0EA371',
+    fontSize: 14,
+    fontWeight: 760
+  },
+  summaryNotice: {
+    border: '1px solid #0EA371',
+    borderRadius: 18,
+    background: '#DFF8EC',
+    color: '#064E3B',
+    padding: 11,
+    fontSize: 14,
+    fontWeight: 700,
+    textAlign: 'center'
+  },
+  summaryError: {
+    border: '1px solid #fecaca',
+    borderRadius: 18,
+    background: '#fff5f5',
+    color: '#991b1b',
+    padding: 11,
+    fontSize: 14,
+    fontWeight: 700,
+    textAlign: 'center'
+  },
+  summaryEmpty: {
+    border: '1px dashed #a3a3a3',
+    borderRadius: 18,
+    background: '#f7f7f7',
+    color: '#555555',
+    padding: 16,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: 560
   },
   totalButton: {
     width: '100%',
