@@ -4,8 +4,8 @@ export default function SaleSummaryCard({ city, folio, total, count }) {
   return (
     <>
       <div style={styles.topRow}>
-        <span>{city}</span>
-        <strong>{folio}</strong>
+        <span style={styles.topText}>{city}</span>
+        <strong style={styles.topFolio}>{folio}</strong>
       </div>
       <div style={styles.label}>Total</div>
       <div style={styles.total}>{money(total)}</div>
@@ -16,12 +16,23 @@ export default function SaleSummaryCard({ city, folio, total, count }) {
 
 const styles = {
   topRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
     gap: 10,
     fontSize: 14,
     fontWeight: 620,
-    marginBottom: 2
+    marginBottom: 2,
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  topText: {
+    minWidth: 0,
+    overflowWrap: 'anywhere'
+  },
+  topFolio: {
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+    textAlign: 'right'
   },
   label: {
     color: '#717171',
@@ -30,11 +41,13 @@ const styles = {
     textTransform: 'uppercase'
   },
   total: {
-    fontSize: 'clamp(44px, 11vw, 52px)',
+    fontSize: 'clamp(40px, 10vw, 52px)',
     lineHeight: 1,
     fontWeight: 720,
     marginTop: 2,
-    letterSpacing: 0
+    letterSpacing: 0,
+    maxWidth: '100%',
+    overflowWrap: 'anywhere'
   },
   count: {
     color: '#666666',

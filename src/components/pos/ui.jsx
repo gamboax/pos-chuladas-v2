@@ -20,7 +20,7 @@ export function TopBar({ title, subtitle, onBack }) {
       <button type="button" style={styles.backButton} onClick={onBack}>
         Volver
       </button>
-      <div>
+      <div style={styles.topText}>
         <div style={styles.topTitle}>{title}</div>
         <div style={styles.topSubtitle}>{subtitle}</div>
       </div>
@@ -51,8 +51,8 @@ export function Empty({ children }) {
 export function SummaryLine({ label, value }) {
   return (
     <div style={styles.summaryLine}>
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span style={styles.summaryLabelText}>{label}</span>
+      <strong style={styles.summaryValueText}>{value}</strong>
     </div>
   )
 }
@@ -194,16 +194,27 @@ export const styles = {
     transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease',
     flexShrink: 0
   },
+  topText: {
+    minWidth: 0,
+    maxWidth: '100%',
+    overflow: 'hidden'
+  },
   topTitle: {
     fontSize: 20,
     fontWeight: 730,
-    lineHeight: 1.1
+    lineHeight: 1.1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   topSubtitle: {
     color: '#555555',
     fontSize: 14,
     fontWeight: 540,
-    marginTop: 2
+    marginTop: 2,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   kicker: {
     color: '#555555',
@@ -320,12 +331,24 @@ export const styles = {
   },
   summaryLine: {
     minWidth: 0,
-    display: 'flex',
-    justifyContent: 'space-between',
+    maxWidth: '100%',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    alignItems: 'start',
     gap: 10,
     color: '#333333',
     fontSize: 16,
     fontWeight: 540
+  },
+  summaryLabelText: {
+    minWidth: 0,
+    overflowWrap: 'anywhere'
+  },
+  summaryValueText: {
+    minWidth: 0,
+    maxWidth: '100%',
+    overflowWrap: 'anywhere',
+    textAlign: 'right'
   },
   sectionTitle: {
     marginTop: 4,
@@ -368,15 +391,16 @@ export const styles = {
   },
   summaryTotal: {
     minWidth: 0,
-    flexWrap: 'wrap',
+    maxWidth: '100%',
     borderTop: '1px solid #d7d7d7',
     paddingTop: 12,
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: 10,
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 4,
     color: '#111111',
-    fontSize: 28,
-    fontWeight: 740
+    fontSize: 'clamp(24px, 7vw, 28px)',
+    fontWeight: 740,
+    overflowWrap: 'anywhere'
   },
   errorBox: {
     background: '#fee2e2',

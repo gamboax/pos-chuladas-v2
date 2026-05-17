@@ -302,9 +302,9 @@ const styles = {
     display: 'none'
   },
   detectedHeader: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 10,
     minWidth: 0,
     maxWidth: '100%',

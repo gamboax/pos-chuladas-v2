@@ -13,11 +13,13 @@
 const styles = {
   grid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: 10
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 10,
+    minWidth: 0
   },
   categoryButton: {
     minHeight: 62,
+    minWidth: 0,
     border: 'none',
     borderRadius: 19,
     background: '#111111',

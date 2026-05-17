@@ -58,14 +58,15 @@ const styles = {
     overflow: 'hidden'
   },
   itemTop: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-    minWidth: 0
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 5,
+    minWidth: 0,
+    maxWidth: '100%'
   },
   itemInfo: {
-    minWidth: 0
+    minWidth: 0,
+    maxWidth: '100%'
   },
   itemTitle: {
     color: '#111111',
@@ -84,16 +85,20 @@ const styles = {
     color: '#111111',
     fontSize: 18,
     fontWeight: 700,
-    whiteSpace: 'nowrap',
-    flexShrink: 0
+    justifySelf: 'end',
+    maxWidth: '100%',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    textAlign: 'right'
   },
   editorRow: {
     display: 'grid',
-    gridTemplateColumns: '42px minmax(48px, 1fr) 42px minmax(58px, 1fr)',
+    gridTemplateColumns: 'minmax(40px, 42px) minmax(0, 1fr) minmax(40px, 42px) minmax(0, 1fr)',
     gap: 7,
     alignItems: 'center',
     minWidth: 0,
-    maxWidth: '100%'
+    maxWidth: '100%',
+    width: '100%'
   },
   smallButton: {
     width: '100%',

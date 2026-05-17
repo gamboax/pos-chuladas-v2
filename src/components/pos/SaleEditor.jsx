@@ -11,7 +11,7 @@ export default function SaleEditor({ city, folio, cart, subtotal, onBack, onChan
       <section style={styles.panel}>
         <div style={styles.stack}>
           <div style={styles.summaryCard}>
-            <div>
+            <div style={styles.summaryInfo}>
               <span style={styles.summaryLabel}>Subtotal</span>
               <strong style={styles.summaryTotal}>{money(subtotal)}</strong>
             </div>
@@ -68,15 +68,17 @@ const styles = {
     borderRadius: 26,
     background: '#ffffff',
     padding: '18px 18px 16px',
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 12,
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 8,
     boxShadow: '0 8px 20px rgba(17, 17, 17, 0.04)',
     boxSizing: 'border-box',
     maxWidth: '100%',
+    minWidth: 0
+  },
+  summaryInfo: {
     minWidth: 0,
-    flexWrap: 'wrap'
+    maxWidth: '100%'
   },
   summaryLabel: {
     display: 'block',
@@ -89,16 +91,20 @@ const styles = {
   summaryTotal: {
     display: 'block',
     color: '#111111',
-    fontSize: 29,
+    fontSize: 'clamp(25px, 7vw, 29px)',
     lineHeight: 1,
     fontWeight: 720,
-    letterSpacing: 0
+    letterSpacing: 0,
+    maxWidth: '100%',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere'
   },
   summaryCount: {
     color: '#666666',
     fontSize: 14,
     fontWeight: 500,
-    whiteSpace: 'nowrap',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
     paddingBottom: 2
   },
   dangerButton: {
