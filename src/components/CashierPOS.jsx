@@ -317,8 +317,8 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
   if (screen === 'city') {
     return (
-      <Page>
-        <Panel>
+      <Page centered>
+        <Panel style={{ borderRadius: 32, padding: 22 }}>
           <Stack>
             <div>
               <Kicker>POS Chuladas V2</Kicker>
@@ -334,7 +334,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
               placeholder="Ej. Matehuala"
             />
 
-            <PrimaryButton disabled={!cityInput.trim()} onClick={startCity}>
+            <PrimaryButton tone="success" disabled={!cityInput.trim()} onClick={startCity}>
               Empezar venta
             </PrimaryButton>
           </Stack>
@@ -548,29 +548,29 @@ function clearDraft() {
 const styles = {
   mainStack: {
     display: 'grid',
-    gap: 9
+    gap: 12
   },
   feedback: {
-    border: '1px solid #8FE3C1',
+    border: '1px solid #0EA371',
     borderRadius: 18,
-    background: '#A7E8D0',
-    color: '#111111',
-    padding: '10px 12px',
+    background: '#10B981',
+    color: '#ffffff',
+    padding: '12px 14px',
     fontSize: 14,
     fontWeight: 720,
     textAlign: 'center',
-    animation: 'none'
+    animation: 'posPop 220ms ease both'
   },
   scannerButton: {
     width: '100%',
     minHeight: 66,
     border: '2px solid #111111',
     borderRadius: 26,
-    background: '#f2fbf4',
+    background: '#DFF8EC',
     color: '#111111',
     fontSize: 18,
     fontWeight: 720,
-    boxShadow: '0 10px 20px rgba(143, 227, 193, 0.18)',
+    boxShadow: '0 10px 20px rgba(16, 185, 129, 0.18)',
     transition: 'transform 140ms ease, opacity 140ms ease'
   },
   bottomActions: {
@@ -593,13 +593,13 @@ const styles = {
   totalButton: {
     width: '100%',
     minHeight: 56,
-    border: '1px solid #8FE3C1',
+    border: '1px solid #0EA371',
     borderRadius: 18,
-    background: '#A7E8D0',
-    color: '#111111',
+    background: '#10B981',
+    color: '#ffffff',
     fontSize: 16,
     fontWeight: 680,
-    boxShadow: '0 10px 18px rgba(143, 227, 193, 0.22)',
+    boxShadow: '0 10px 18px rgba(16, 185, 129, 0.22)',
     transition: 'transform 140ms ease, opacity 140ms ease'
   }
 }

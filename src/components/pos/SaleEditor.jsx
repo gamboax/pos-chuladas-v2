@@ -1,4 +1,4 @@
-﻿import { money } from '../../lib/ticket'
+import { money } from '../../lib/ticket'
 import EditableItem from './EditableItem'
 import HeaderBar from './HeaderBar'
 import { Empty } from './ui'
@@ -120,11 +120,12 @@ const styles = {
   totalButton: {
     width: '100%',
     minHeight: 62,
-    border: '1px solid #8FE3C1',
+    border: '1px solid #0EA371',
     borderRadius: 20,
-    background: '#A7E8D0',
-    color: '#111111',
+    background: '#10B981',
+    color: '#ffffff',
     fontSize: 16,
-    fontWeight: 700
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   }
 }

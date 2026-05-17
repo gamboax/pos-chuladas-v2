@@ -1,17 +1,17 @@
-﻿export function Page({ children }) {
+﻿export function Page({ children, centered = false }) {
   return (
-    <main style={styles.page}>
+    <main style={{ ...styles.page, ...(centered ? styles.centeredPage : {}) }}>
       <div style={styles.shell}>{children}</div>
     </main>
   )
 }
 
-export function Panel({ children }) {
-  return <section style={styles.panel}>{children}</section>
+export function Panel({ children, style }) {
+  return <section className="pos-surface" style={{ ...styles.panel, ...(style || {}) }}>{children}</section>
 }
 
-export function Stack({ children }) {
-  return <div style={styles.stack}>{children}</div>
+export function Stack({ children, style }) {
+  return <div style={{ ...styles.stack, ...(style || {}) }}>{children}</div>
 }
 
 export function TopBar({ title, subtitle, onBack }) {
@@ -127,15 +127,25 @@ export function ChoiceButton({ active, children, onClick }) {
   )
 }
 
+export const SUCCESS = '#10B981'
+export const SUCCESS_SOFT = '#DFF8EC'
+export const SUCCESS_SHADOW = 'rgba(16, 185, 129, 0.22)'
+
 export const styles = {
   page: {
     minHeight: '100svh',
     background: '#f4f4f4',
     color: '#111111',
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    padding: '10px 10px 16px',
+    padding: '18px 18px 22px',
     boxSizing: 'border-box',
     textAlign: 'left'
+  },
+  centeredPage: {
+    display: 'grid',
+    alignItems: 'center',
+    paddingTop: 28,
+    paddingBottom: 28
   },
   shell: {
     width: '100%',
@@ -145,53 +155,56 @@ export const styles = {
   panel: {
     background: '#ffffff',
     border: '1px solid #111111',
-    borderRadius: 24,
-    padding: 14,
-    boxShadow: '0 14px 28px rgba(17, 17, 17, 0.08)'
+    borderRadius: 28,
+    padding: 18,
+    boxShadow: '0 16px 34px rgba(17, 17, 17, 0.08)',
+    boxSizing: 'border-box'
   },
   stack: {
     display: 'grid',
-    gap: 14
+    gap: 16
   },
   topBar: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 12
+    marginBottom: 14,
+    paddingTop: 2
   },
   backButton: {
     minWidth: 86,
-    height: 46,
+    height: 48,
     border: '1px solid #111111',
     borderRadius: 999,
     background: '#ffffff',
     color: '#111111',
     fontSize: 15,
-    fontWeight: 720
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   topTitle: {
     fontSize: 21,
-    fontWeight: 760,
+    fontWeight: 730,
     lineHeight: 1.1
   },
   topSubtitle: {
     color: '#555555',
     fontSize: 14,
-    fontWeight: 560,
+    fontWeight: 540,
     marginTop: 2
   },
   kicker: {
     color: '#555555',
     fontSize: 13,
-    fontWeight: 720,
+    fontWeight: 700,
     textTransform: 'uppercase'
   },
   title: {
-    margin: '4px 0 2px',
+    margin: '6px 0 4px',
     color: '#111111',
     fontSize: 34,
     lineHeight: 1,
-    fontWeight: 780,
+    fontWeight: 740,
     letterSpacing: 0
   },
   muted: {
@@ -202,60 +215,62 @@ export const styles = {
   },
   primaryButton: {
     width: '100%',
-    minHeight: 56,
+    minHeight: 58,
     border: 'none',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#111111',
     color: '#ffffff',
     fontSize: 17,
-    fontWeight: 760,
+    fontWeight: 730,
     boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)',
-    transition: 'transform 140ms ease, opacity 140ms ease'
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   successButton: {
     width: '100%',
-    minHeight: 56,
-    border: '1px solid #8FE3C1',
-    borderRadius: 18,
-    background: '#A7E8D0',
-    color: '#111111',
+    minHeight: 58,
+    border: '1px solid #0EA371',
+    borderRadius: 20,
+    background: SUCCESS,
+    color: '#ffffff',
     fontSize: 17,
-    fontWeight: 760,
-    boxShadow: '0 10px 18px rgba(143, 227, 193, 0.22)',
-    transition: 'transform 140ms ease, opacity 140ms ease'
+    fontWeight: 730,
+    boxShadow: `0 12px 22px ${SUCCESS_SHADOW}`,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   secondaryButton: {
     width: '100%',
     minHeight: 56,
     border: '1px solid #111111',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#ffffff',
     color: '#111111',
     fontSize: 16,
-    fontWeight: 720,
-    transition: 'transform 140ms ease, opacity 140ms ease'
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   dangerButton: {
     width: '100%',
     minHeight: 54,
     border: '1px solid #b91c1c',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#fff5f5',
     color: '#b91c1c',
     fontSize: 16,
-    fontWeight: 720
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   textInput: {
     width: '100%',
-    minHeight: 56,
+    minHeight: 58,
     border: '1px solid #111111',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#ffffff',
     color: '#111111',
     fontSize: 18,
-    fontWeight: 560,
-    padding: '0 12px',
-    boxSizing: 'border-box'
+    fontWeight: 540,
+    padding: '0 16px',
+    boxSizing: 'border-box',
+    transition: 'border-color 140ms ease, box-shadow 140ms ease, background 140ms ease'
   },
   compactInput: {
     width: '100%',
@@ -266,7 +281,7 @@ export const styles = {
     color: '#111111',
     textAlign: 'center',
     fontSize: 16,
-    fontWeight: 650,
+    fontWeight: 620,
     boxSizing: 'border-box'
   },
   choiceButton: {
@@ -274,7 +289,8 @@ export const styles = {
     border: '1px solid #d7d7d7',
     borderRadius: 18,
     fontSize: 16,
-    fontWeight: 720
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   summaryLine: {
     display: 'flex',
@@ -282,23 +298,23 @@ export const styles = {
     gap: 10,
     color: '#333333',
     fontSize: 16,
-    fontWeight: 560
+    fontWeight: 540
   },
   sectionTitle: {
     marginTop: 4,
     color: '#111111',
     fontSize: 17,
-    fontWeight: 720
+    fontWeight: 700
   },
   empty: {
     border: '1px dashed #a3a3a3',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#f5f5f5',
     color: '#555555',
     padding: 18,
     textAlign: 'center',
     fontSize: 16,
-    fontWeight: 560
+    fontWeight: 540
   },
   twoColumns: {
     display: 'grid',
@@ -312,28 +328,28 @@ export const styles = {
   },
   summaryBox: {
     border: '1px solid #111111',
-    borderRadius: 20,
+    borderRadius: 22,
     background: '#ffffff',
-    padding: 12,
+    padding: 14,
     display: 'grid',
-    gap: 8
+    gap: 10
   },
   summaryTotal: {
     borderTop: '1px solid #d7d7d7',
-    paddingTop: 10,
+    paddingTop: 12,
     display: 'flex',
     justifyContent: 'space-between',
     gap: 10,
     color: '#111111',
     fontSize: 28,
-    fontWeight: 760
+    fontWeight: 740
   },
   errorBox: {
     background: '#fee2e2',
     border: '1px solid #fecaca',
-    borderRadius: 12,
+    borderRadius: 16,
     color: '#991b1b',
-    fontWeight: 800,
+    fontWeight: 760,
     padding: 14,
     textAlign: 'center'
   },
@@ -353,10 +369,10 @@ export const styles = {
     overflow: 'auto',
     whiteSpace: 'pre-wrap',
     border: '1px solid #d7d7d7',
-    borderRadius: 18,
+    borderRadius: 20,
     background: '#f5f5f5',
     color: '#111111',
-    padding: 12,
+    padding: 14,
     fontSize: 13,
     lineHeight: 1.45,
     fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace'

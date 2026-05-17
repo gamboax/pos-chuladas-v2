@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   fetchInventoryData,
   fetchTodayAdminData,
@@ -683,7 +683,7 @@ const styles = {
     background: '#f4f4f4',
     color: '#111111',
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    padding: '10px 10px 16px',
+    padding: '18px 18px 22px',
     boxSizing: 'border-box'
   },
   shell: {
@@ -727,8 +727,8 @@ const styles = {
   panel: {
     background: '#ffffff',
     border: '1px solid #111111',
-    borderRadius: 24,
-    padding: 16,
+    borderRadius: 28,
+    padding: 18,
     boxShadow: '0 14px 28px rgba(17, 17, 17, 0.08)'
   },
   stack: {
@@ -808,10 +808,10 @@ const styles = {
     gap: 2
   },
   notice: {
-    border: '1px solid #8FE3C1',
+    border: '1px solid #0EA371',
     borderRadius: 18,
-    background: '#A7E8D0',
-    color: '#111111',
+    background: '#DFF8EC',
+    color: '#064E3B',
     padding: 12,
     fontSize: 14,
     fontWeight: 700,
@@ -891,12 +891,14 @@ const styles = {
   primaryButton: {
     width: '100%',
     minHeight: 56,
-    border: 'none',
+    border: '1px solid #0EA371',
     borderRadius: 18,
-    background: '#111111',
+    background: '#10B981',
     color: '#ffffff',
     fontSize: 16,
-    fontWeight: 720
+    fontWeight: 720,
+    boxShadow: '0 12px 22px rgba(16, 185, 129, 0.18)',
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   secondaryButton: {
     width: '100%',
@@ -906,7 +908,8 @@ const styles = {
     background: '#ffffff',
     color: '#111111',
     fontSize: 16,
-    fontWeight: 720
+    fontWeight: 720,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   }
 }
 

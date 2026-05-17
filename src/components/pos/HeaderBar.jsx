@@ -1,15 +1,16 @@
-﻿const baseHeader = {
+const baseHeader = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: 12,
-  marginBottom: 12,
+  marginBottom: 14,
   position: 'relative',
   background: '#ffffff',
   border: '1px solid #111111',
   borderRadius: 999,
   padding: '8px 8px 8px 16px',
-  boxShadow: '0 12px 26px rgba(17, 17, 17, 0.08)'
+  boxShadow: '0 12px 26px rgba(17, 17, 17, 0.08)',
+  boxSizing: 'border-box'
 }
 
 export default function HeaderBar({
@@ -123,6 +124,7 @@ const styles = {
     background: '#111111',
     color: '#ffffff',
     fontSize: 15,
-    fontWeight: 700
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   }
 }

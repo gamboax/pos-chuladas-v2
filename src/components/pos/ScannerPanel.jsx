@@ -1,23 +1,163 @@
-﻿import EditableItem from './EditableItem'
-import { Muted, Panel, PrimaryButton, Stack, TopBar } from './ui'
+import { useEffect, useRef, useState } from 'react'
+import EditableItem from './EditableItem'
+import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TopBar } from './ui'
 
 export default function ScannerPanel({ items, onBack, onChange, onRemove, onConfirm }) {
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const streamRef = useRef(null)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
+  const [cameraError, setCameraError] = useState('')
+  const [capturedImage, setCapturedImage] = useState('')
+
+  useEffect(() => {
+    return () => stopCamera(false)
+  }, [])
+
+  async function startCamera() {
+    if (streamRef.current) {
+      attachVideoStream()
+      return
+    }
+
+    setCameraError('')
+    setCameraMessage('Solicitando permiso de camara...')
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraMessage('Camara no disponible en este navegador.')
+      setCameraError('Este navegador no permite usar camara aqui. En celular, abre la app desde HTTPS.')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      })
+
+      streamRef.current = stream
+
+      await attachVideoStream()
+
+      setCameraActive(true)
+      setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
+    } catch (error) {
+      console.error('[Scanner camera] getUserMedia failed:', error)
+      setCameraActive(false)
+      setCameraMessage('No se pudo activar la camara.')
+      setCameraError(cameraErrorMessage(error))
+      stopCamera()
+    }
+  }
+
+  async function attachVideoStream() {
+    if (!videoRef.current || !streamRef.current) return
+    videoRef.current.srcObject = streamRef.current
+    await videoRef.current.play().catch(() => {})
+  }
+
+  function showLivePreview() {
+    setCapturedImage('')
+    window.requestAnimationFrame(() => {
+      attachVideoStream()
+    })
+  }
+
+  function stopCamera(updateState = true) {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+
+    if (updateState) setCameraActive(false)
+  }
+
+  function captureFrame() {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+
+    if (!video || !canvas || !streamRef.current) {
+      setCameraError('Activa la camara antes de tomar captura.')
+      return
+    }
+
+    const width = video.videoWidth || 1280
+    const height = video.videoHeight || 720
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    context.drawImage(video, 0, 0, width, height)
+    setCapturedImage(canvas.toDataURL('image/jpeg', 0.86))
+    setCameraError('')
+    setCameraMessage('Captura tomada. OCR real se conectara en la siguiente fase.')
+  }
+
+  function goBack() {
+    stopCamera()
+    onBack()
+  }
+
   return (
     <>
-      <TopBar title="Escanear articulos" subtitle="OCR pendiente, editable por ahora" onBack={onBack} />
+      <TopBar title="Escanear articulos" subtitle="Camara real / OCR pendiente" onBack={goBack} />
       <Panel>
         <Stack>
           <div style={styles.cameraBox}>
-            <div style={styles.cameraCircle}>Camara</div>
-            <strong>Placeholder de escaner</strong>
-            <Muted>Estos articulos son ejemplos detectados.</Muted>
+            {capturedImage ? (
+              <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
+            ) : (
+              <video ref={videoRef} style={styles.video} playsInline muted autoPlay />
+            )}
+            {!cameraActive && !capturedImage && (
+              <div style={styles.cameraOverlay}>
+                <strong>Vista de camara</strong>
+                <Muted>Activa la camara para ver el preview.</Muted>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.statusBox}>
+            <strong>{cameraMessage}</strong>
+            {cameraError && <span>{cameraError}</span>}
+          </div>
+
+          <div style={styles.cameraActions}>
+            <SecondaryButton onClick={goBack}>Volver</SecondaryButton>
+            <button type="button" style={styles.cameraButton} onClick={startCamera} disabled={cameraActive}>
+              {cameraActive ? 'Camara activa' : 'Activar camara'}
+            </button>
+            <button type="button" style={styles.captureButton} onClick={captureFrame} disabled={!cameraActive}>
+              Tomar captura
+            </button>
+          </div>
+
+          {capturedImage && (
+            <button type="button" style={styles.retakeButton} onClick={showLivePreview}>
+              Ver camara otra vez
+            </button>
+          )}
+
+          <canvas ref={canvasRef} style={styles.canvas} />
+
+          <div style={styles.detectedHeader}>
+            <strong>Articulos detectados</strong>
+            <span>Demo editable</span>
           </div>
 
           {items.map((item) => (
             <EditableItem key={item.id} item={item} onChange={onChange} onRemove={onRemove} />
           ))}
 
-          <PrimaryButton disabled={!items.length} onClick={onConfirm}>
+          <PrimaryButton tone="success" disabled={!items.length} onClick={onConfirm}>
             Confirmar y agregar
           </PrimaryButton>
         </Stack>
@@ -26,26 +166,115 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
   )
 }
 
+function cameraErrorMessage(error) {
+  if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
+    return 'Permiso de camara denegado. Revisa permisos del navegador y vuelve a intentar.'
+  }
+
+  if (error?.name === 'NotFoundError' || error?.name === 'DevicesNotFoundError') {
+    return 'No se encontro camara disponible en este dispositivo.'
+  }
+
+  if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+    return 'La camara necesita HTTPS. En Vercel funcionara con dominio seguro.'
+  }
+
+  return 'No se pudo iniciar la camara. Puedes seguir agregando los articulos demo manualmente.'
+}
+
 const styles = {
   cameraBox: {
-    minHeight: 230,
-    border: '2px dashed #111111',
-    borderRadius: 20,
-    background: '#f5f5f5',
+    minHeight: 270,
+    border: '1px solid #111111',
+    borderRadius: 24,
+    background: '#111111',
+    position: 'relative',
+    overflow: 'hidden',
+    boxShadow: '0 14px 28px rgba(17, 17, 17, 0.14)'
+  },
+  video: {
+    width: '100%',
+    height: 270,
+    display: 'block',
+    objectFit: 'cover',
+    background: '#111111'
+  },
+  previewImage: {
+    width: '100%',
+    height: 270,
+    display: 'block',
+    objectFit: 'cover'
+  },
+  cameraOverlay: {
+    position: 'absolute',
+    inset: 0,
     display: 'grid',
     placeItems: 'center',
     alignContent: 'center',
     gap: 8,
+    color: '#ffffff',
     textAlign: 'center',
-    padding: 16
+    padding: 18,
+    background: 'linear-gradient(180deg, rgba(17,17,17,0.24), rgba(17,17,17,0.7))'
   },
-  cameraCircle: {
-    width: 82,
-    height: 82,
-    borderRadius: '50%',
-    border: '2px solid #111111',
+  statusBox: {
+    border: '1px solid #0EA371',
+    borderRadius: 20,
+    background: '#DFF8EC',
+    color: '#111111',
+    padding: 13,
     display: 'grid',
-    placeItems: 'center',
-    fontWeight: 720
+    gap: 4,
+    fontSize: 14,
+    lineHeight: 1.3
+  },
+  cameraActions: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: 10
+  },
+  cameraButton: {
+    width: '100%',
+    minHeight: 58,
+    border: '1px solid #111111',
+    borderRadius: 20,
+    background: '#ffffff',
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: 700,
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+  },
+  captureButton: {
+    width: '100%',
+    minHeight: 58,
+    border: '1px solid #0EA371',
+    borderRadius: 20,
+    background: '#10B981',
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 740,
+    boxShadow: '0 12px 22px rgba(16, 185, 129, 0.22)',
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
+  },
+  retakeButton: {
+    width: '100%',
+    minHeight: 52,
+    border: '1px solid #d7d7d7',
+    borderRadius: 18,
+    background: '#f7f7f7',
+    color: '#111111',
+    fontSize: 15,
+    fontWeight: 680
+  },
+  canvas: {
+    display: 'none'
+  },
+  detectedHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    color: '#111111',
+    fontSize: 15
   }
 }

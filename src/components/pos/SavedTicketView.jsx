@@ -1,4 +1,4 @@
-﻿import { money } from '../../lib/ticket'
+import { money } from '../../lib/ticket'
 import { Panel, PrimaryButton, SecondaryButton, Stack, SummaryLine, Title, Kicker, styles as uiStyles } from './ui'
 
 export default function SavedTicketView({ sale, ticketText, onSendWhatsApp, onNewSale, onBack }) {
@@ -22,7 +22,7 @@ export default function SavedTicketView({ sale, ticketText, onSendWhatsApp, onNe
 
         <pre style={uiStyles.ticketBox}>{ticketText}</pre>
 
-        <PrimaryButton onClick={onSendWhatsApp}>Enviar WhatsApp</PrimaryButton>
+        <PrimaryButton tone="success" onClick={onSendWhatsApp}>Enviar WhatsApp</PrimaryButton>
         <SecondaryButton onClick={onNewSale}>Nueva venta</SecondaryButton>
         <SecondaryButton onClick={onBack}>Volver a caja</SecondaryButton>
       </Stack>

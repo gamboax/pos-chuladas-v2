@@ -1,4 +1,4 @@
-﻿import { money } from '../../lib/ticket'
+import { money } from '../../lib/ticket'
 import HeaderBar from './HeaderBar'
 import {
   ChoiceButton,
@@ -96,7 +96,7 @@ export default function CheckoutPanel({
           <SecondaryButton onClick={onBack}>Regresar a venta</SecondaryButton>
           <DangerButton onClick={onClear}>Borrar venta</DangerButton>
           {saveError && <div style={uiStyles.errorBox}>{saveError}</div>}
-          <PrimaryButton disabled={!cartLength || isSavingSale} onClick={onSave}>
+          <PrimaryButton tone="success" disabled={!cartLength || isSavingSale} onClick={onSave}>
             {isSavingSale ? 'Guardando...' : 'Guardar venta'}
           </PrimaryButton>
         </Stack>

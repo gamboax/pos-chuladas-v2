@@ -1,4 +1,4 @@
-﻿import HeaderBar from './HeaderBar'
+import HeaderBar from './HeaderBar'
 import { Kicker } from './ui'
 import { money } from '../../lib/ticket'
 
@@ -143,15 +143,15 @@ const styles = {
   subtotalCard: {
     minHeight: 52,
     borderRadius: 20,
-    background: '#A7E8D0',
-    color: '#111111',
+    background: '#10B981',
+    color: '#ffffff',
     padding: '0 18px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     fontSize: 18,
     fontWeight: 760,
-    boxShadow: '0 10px 18px rgba(143, 227, 193, 0.24)'
+    boxShadow: '0 10px 18px rgba(16, 185, 129, 0.24)'
   },
   numberDisplay: {
     minHeight: 52,
@@ -180,7 +180,8 @@ const styles = {
     color: '#111111',
     fontSize: 23,
     fontWeight: 650,
-    boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)'
+    boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)',
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   actions: {
     display: 'grid',
@@ -197,17 +198,19 @@ const styles = {
     color: '#111111',
     fontSize: 18,
     fontWeight: 700,
-    boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)'
+    boxShadow: '0 8px 16px rgba(17, 17, 17, 0.05)',
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   },
   nextButton: {
     width: '100%',
     minHeight: 56,
     border: 'none',
     borderRadius: 18,
-    background: '#A7E8D0',
-    color: '#111111',
+    background: '#10B981',
+    color: '#ffffff',
     fontSize: 18,
     fontWeight: 760,
-    boxShadow: '0 10px 18px rgba(143, 227, 193, 0.28)'
+    boxShadow: '0 12px 22px rgba(16, 185, 129, 0.24)',
+    transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
   }
 }

@@ -90,7 +90,7 @@ const page = {
   background: '#f4f4f4',
   display: 'grid',
   placeItems: 'center',
-  padding: 16,
+  padding: 20,
   boxSizing: 'border-box',
   fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 }
@@ -100,12 +100,13 @@ const card = {
   maxWidth: 430,
   background: '#ffffff',
   border: '1px solid #111111',
-  borderRadius: 30,
-  padding: 24,
+  borderRadius: 32,
+  padding: 26,
   display: 'grid',
-  gap: 14,
+  gap: 16,
   boxShadow: '0 16px 32px rgba(17, 17, 17, 0.08)',
-  boxSizing: 'border-box'
+  boxSizing: 'border-box',
+  transition: 'border-color 140ms ease, box-shadow 140ms ease'
 }
 
 const headerBlock = {
@@ -145,7 +146,8 @@ const input = {
   fontSize: 18,
   fontWeight: 560,
   padding: '0 16px',
-  boxSizing: 'border-box'
+  boxSizing: 'border-box',
+  transition: 'border-color 140ms ease, box-shadow 140ms ease'
 }
 
 const button = {
@@ -157,7 +159,8 @@ const button = {
   color: '#ffffff',
   fontSize: 18,
   fontWeight: 760,
-  boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)'
+  boxShadow: '0 10px 18px rgba(17, 17, 17, 0.14)',
+  transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease'
 }
 
 const errorBox = {
