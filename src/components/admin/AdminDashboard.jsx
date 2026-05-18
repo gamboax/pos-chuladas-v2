@@ -31,6 +31,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [eventDate, setEventDate] = useState(todayInputValue())
   const [eventMonth, setEventMonth] = useState(monthInputValue())
   const [superView, setSuperView] = useState('month')
+  const [managerView, setManagerView] = useState('dashboard')
   const [selectedCityDrill, setSelectedCityDrill] = useState('')
   const [operationsCity, setOperationsCity] = useState('')
   const [selectedTicket, setSelectedTicket] = useState(null)
@@ -120,6 +121,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     const source = operationsCity ? summary.sales.filter((sale) => cityEquals(sale.city, operationsCity)) : summary.sales
     return source.slice().sort((a, b) => saleDate(b) - saleDate(a))
   }, [summary.sales, operationsCity])
+  const managerOperationsSales = useMemo(() => summary.sales.slice().sort((a, b) => saleDate(b) - saleDate(a)), [summary.sales])
   const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
   const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
   const cityLabel = effectiveCity || 'Todas las ciudades'
@@ -361,11 +363,11 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               <>
                 <label style={styles.labelBlock}>
                   Ciudad / evento
-                  <input value={eventCity} onChange={(event) => setEventCity(event.target.value)} placeholder="Ej. Matehuala" style={styles.input} />
+                  <input value={eventCity} onChange={(event) => { setEventCity(event.target.value); setSelectedTicket(null) }} placeholder="Ej. Matehuala" style={styles.input} />
                 </label>
                 <label style={styles.labelBlock}>
                   Fecha
-                  <input value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" style={styles.input} />
+                  <input value={eventDate} onChange={(event) => { setEventDate(event.target.value); setSelectedTicket(null) }} type="date" style={styles.input} />
                 </label>
               </>
             )}
@@ -393,7 +395,22 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
             )}
 
             {!usesMonthlyGlobalView && (
-              <>
+              managerView === 'operations' ? (
+                <ManagerOperationsPanel
+                  cityLabel={cityLabel}
+                  eventDate={eventDate}
+                  operationsSales={managerOperationsSales}
+                  pendingLocalSales={pendingLocalSales}
+                  inventory={inventory}
+                  selectedTicket={selectedTicket}
+                  onSelectTicket={setSelectedTicket}
+                  onBack={() => { setManagerView('dashboard'); setSelectedTicket(null) }}
+                  onBackTicket={() => setSelectedTicket(null)}
+                  onCopyTicket={handleCopyTicket}
+                  onResendWhatsApp={handleResendWhatsApp}
+                />
+              ) : (
+                <>
             <section style={styles.cleanSection}>
               <div style={styles.sectionHead}>
                 <h2 style={styles.sectionTitle}>Resumen</h2>
@@ -517,6 +534,9 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <h2 style={styles.sectionTitle}>Tickets recientes</h2>
                 <span style={styles.chip}>{visibleTickets.length}</span>
               </div>
+              <button type="button" style={styles.primaryButton} onClick={() => { setSelectedTicket(null); setManagerView('operations') }}>
+                Ver operaciones
+              </button>
               <input value={ticketSearch} onChange={(event) => setTicketSearch(event.target.value)} placeholder="Buscar folio, cliente o pago" style={styles.input} />
               {visibleTickets.length === 0 ? (
                 <div style={styles.empty}>No hay tickets para mostrar.</div>
@@ -534,7 +554,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 />
               )}
             </section>
-              </>
+                </>
+              )
             )}
 
             {isSuperAdmin && (
@@ -597,7 +618,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 </div>
               </section>
             )}
-            {canManageOps && !isSuperAdmin && (
+            {canManageOps && !isSuperAdmin && managerView !== 'operations' && (
               <>
                 <section style={styles.cleanSection}>
                   <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Gastos del evento</h2><span style={styles.chip}>{cityLabel}</span></div>
@@ -827,6 +848,60 @@ function TicketRow({ sale, onSelect }) {
         <small>{time}</small>
       </span>
     </button>
+  )
+}
+
+function ManagerOperationsPanel({
+  cityLabel,
+  eventDate,
+  operationsSales,
+  pendingLocalSales,
+  inventory,
+  selectedTicket,
+  onSelectTicket,
+  onBack,
+  onBackTicket,
+  onCopyTicket,
+  onResendWhatsApp
+}) {
+  const pendingRows = pendingLocalSales.map((sale) => ({
+    ...sale,
+    pendingSync: true,
+    status: sale.status || 'pending'
+  }))
+  const allRows = [...operationsSales, ...pendingRows].sort((a, b) => saleDate(b) - saleDate(a))
+
+  return (
+    <section style={styles.cleanSection}>
+      <div style={styles.sectionHead}>
+        <h2 style={styles.sectionTitle}>Operaciones</h2>
+        <button type="button" style={styles.linkButton} onClick={onBack}>Volver</button>
+      </div>
+      <div style={styles.notice}>{cityLabel} / {eventDate} / {allRows.length} operacion(es)</div>
+      {selectedTicket ? (
+        <TicketDetail
+          sale={selectedTicket}
+          inventory={inventory}
+          isInvestor={false}
+          onCopy={onCopyTicket}
+          onResendWhatsApp={onResendWhatsApp}
+          onClose={onBackTicket}
+          closeLabel="Volver a operaciones"
+        />
+      ) : allRows.length === 0 ? (
+        <div style={styles.empty}>Sin operaciones para esta ciudad y fecha.</div>
+      ) : (
+        <div style={styles.operationList}>
+          {allRows.map((sale, index) => (
+            <OperationRow
+              key={`${sale.pendingSync ? 'pending' : 'sale'}-${sale.id || sale.folio || sale.local_id || index}`}
+              sale={sale}
+              onSelect={onSelectTicket}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -1093,7 +1168,7 @@ function OperationRow({ sale, onSelect }) {
   return (
     <button type="button" style={styles.operationRow} onClick={() => onSelect?.(sale)}>
       <span style={styles.ticketInfo}>
-        <strong>{sale.folio || 'Sin folio'} · {sale.city || 'Sin ciudad'}</strong>
+        <strong>{sale.folio || 'Sin folio'} / {sale.city || 'Sin ciudad'}</strong>
         <small>{timestamp} / {sale.payment_method || 'Pago'} / {sale.customer_name || 'Sin cliente'}</small>
         <small>{units ? `${units} pza(s)` : 'sin detalle de articulos'} / {saleStatusLabel(sale)}</small>
       </span>

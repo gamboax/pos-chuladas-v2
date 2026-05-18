@@ -82,8 +82,9 @@ function buildVisionRequest(image) {
           {
             type: 'input_text',
             text: [
-              'Analiza esta imagen de etiquetas de joyeria escritas a mano.',
-              'Busca codigos cortos como A2, E1, J2, C3, X o CAJA y precios cercanos como $35, 35, 90.',
+              'Analiza esta imagen completa de articulos de joyeria con etiquetas manuscritas.',
+              'Busca todos los codigos visibles como A2, E3, J2, C1, X o CAJA y precios escritos cerca como $35, 90, 120.',
+              'Puede haber varias etiquetas en una misma imagen, chuecas, pequenas o parcialmente visibles.',
               'Devuelve unicamente JSON valido. No inventes productos si no estas seguro.',
               'Reglas: A=Anillo, P=Pulsera, T=Tobillera, D=Collar con dije, I=Dije, E=Arete, R=Rosario, J=Juego, C=Cadena, X/CAJA=Caja.',
               'Material: 1=Acero inoxidable, 2=Oro laminado, 3=Bano de rodio, 4=Bano de plata.',

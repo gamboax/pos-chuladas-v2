@@ -13,17 +13,17 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   const ocrRunRef = useRef(0)
   const aiAbortRef = useRef(null)
   const capturedImageUrlRef = useRef('')
-  const [scanRegion, setScanRegion] = useState({ x: 0.24, y: 0.34, width: 0.52, height: 0.28 })
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
   const [capturedImage, setCapturedImage] = useState('')
   const [codeInput, setCodeInput] = useState('')
-  const [assistMessage, setAssistMessage] = useState('Toma foto y escribe codigo. Ej. A2 o A2-30.')
+  const [assistMessage, setAssistMessage] = useState('Toma foto y escribe codigo si hace falta. Ej. A2 o A2-30.')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
   const [isOcrReading, setIsOcrReading] = useState(false)
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false)
+  const [showBasicRead, setShowBasicRead] = useState(false)
   const [ocrDetectedCodes, setOcrDetectedCodes] = useState([])
   const [ocrText, setOcrText] = useState('')
   const [codeHistory, setCodeHistory] = useState([])
@@ -110,8 +110,9 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     setIsOcrReading(true)
     setOcrDetectedCodes([])
     setOcrText('')
-    setCameraMessage('Leyendo etiqueta...')
-    setAssistMessage('Leyendo etiqueta. Puedes escribir el codigo si tienes prisa.')
+    setShowBasicRead(false)
+    setCameraMessage('Intentando lectura basica...')
+    setAssistMessage('Intentando lectura basica. Puedes escribir el codigo si tienes prisa.')
 
     try {
       const texts = []
@@ -119,7 +120,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
       for (const variant of imageVariants) {
         if (ocrRunRef.current !== runId) return
-        setCameraMessage(`Leyendo etiqueta (${variant.label})...`)
+        setCameraMessage('Intentando lectura basica...')
         const text = await recognizeCodesFromImage(variant.image, { psm: variant.psm })
         if (ocrRunRef.current !== runId) return
         texts.push(text)
@@ -138,8 +139,8 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       setOcrDetectedCodes(detected)
 
       if (!detected.length) {
-        setAssistMessage('No pude leer bien. Corrigelo rapido abajo.')
-        setCameraMessage('Etiqueta dudosa. Revisa o escribe codigo.')
+        setAssistMessage('No pude leer la foto. Intenta otra captura o captura manual.')
+        setCameraMessage('Sin sugerencias claras. Captura manual disponible.')
         return
       }
 
@@ -152,12 +153,12 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       }
 
       setAssistMessage(`${detected.length} posible(s) codigo(s). Revisa precios antes de confirmar.`)
-      setCameraMessage('Posibles codigos detectados. Listo para revisar.')
+      setCameraMessage('Sugerencias detectadas. Listo para revisar.')
       vibrateLight()
     } catch {
       if (ocrRunRef.current !== runId) return
-      setAssistMessage('No pude leer bien. Corrigelo rapido abajo.')
-      setCameraMessage('Captura tomada. OCR no disponible.')
+      setAssistMessage('No pude leer la foto. Intenta otra captura o captura manual.')
+      setCameraMessage('Captura manual disponible.')
     } finally {
       if (ocrRunRef.current === runId) {
         setIsOcrReading(false)
@@ -175,12 +176,13 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     const timeout = window.setTimeout(() => controller.abort(), 18000)
     aiAbortRef.current = controller
     setIsAiAnalyzing(true)
+    setShowBasicRead(false)
     setAssistError('')
-    setCameraMessage('Analizando etiqueta...')
-    setAssistMessage('Leyendo etiquetas con IA...')
+    setCameraMessage('Analizando con IA...')
+    setAssistMessage('Leyendo etiquetas...')
 
     try {
-      const image = createAiLabelImage(canvas, scanRegion)
+      const image = createAiLabelImage(canvas)
       const response = await fetch('/api/analyze-label', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -198,8 +200,9 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       setOcrText(payload.message || '')
 
       if (!suggested.length) {
-        setAssistMessage(payload.message || 'No pude leerlo bien, corrige manualmente.')
-        setCameraMessage('Sin sugerencias claras. Corrige manualmente.')
+        setShowBasicRead(true)
+        setAssistMessage(payload.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
+        setCameraMessage('Sin sugerencias claras. Captura manual disponible.')
         return
       }
 
@@ -218,8 +221,9 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
         setAssistMessage('Analisis cancelado. Puedes reintentar o corregir manualmente.')
         setCameraMessage('Analisis cancelado.')
       } else {
-        setAssistMessage(error.message || 'No pude leerlo bien, corrige manualmente.')
-        setCameraMessage('No pude leerlo bien. Corrige manualmente.')
+        setShowBasicRead(true)
+        setAssistMessage(error.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
+        setCameraMessage('No pude leer la foto. Captura manual disponible.')
       }
     } finally {
       window.clearTimeout(timeout)
@@ -236,6 +240,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       clearCapturedImage()
       setOcrDetectedCodes([])
       setOcrText('')
+      setShowBasicRead(false)
       await attachVideoStream()
       setCameraActive(true)
       setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
@@ -246,6 +251,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     clearCapturedImage()
     setOcrDetectedCodes([])
     setOcrText('')
+    setShowBasicRead(false)
     setCameraMessage('Solicitando permiso de camara...')
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -291,6 +297,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     setIsOcrReading(false)
     setOcrDetectedCodes([])
     setOcrText('')
+    setShowBasicRead(false)
     setCameraMessage(streamRef.current ? 'Camara activa. Toma otra captura.' : 'Activa la camara para repetir captura.')
 
     if (streamRef.current) {
@@ -339,7 +346,6 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     canvas.height = height
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, width, height)
-    const ocrVariants = createOcrImageVariants(canvas, scanRegion)
     const runId = ocrRunRef.current + 1
     ocrRunRef.current = runId
     canvas.toBlob((blob) => {
@@ -350,43 +356,20 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       setCapturedImage(previewUrl)
     }, 'image/jpeg', 0.86)
     setCameraError('')
-    setCameraMessage('Captura tomada. Leyendo etiqueta...')
-    setAssistMessage('Leyendo etiqueta...')
+    setShowBasicRead(false)
+    setCameraMessage('Captura tomada. Lista para analizar.')
+    setAssistMessage('Toca Analizar con IA o escribe el codigo.')
     window.setTimeout(() => inputRef.current?.focus(), 90)
-    runOcr(ocrVariants, runId)
   }
 
-  function reprocessRegion() {
+  function runBasicRead() {
     const canvas = canvasRef.current
     if (!canvas || !capturedImage) return
 
     const runId = ocrRunRef.current + 1
     ocrRunRef.current = runId
     setCameraError('')
-    setCameraMessage('Releyendo etiqueta...')
-    setAssistMessage('Releyendo etiqueta con la region ajustada...')
-    runOcr(createOcrImageVariants(canvas, scanRegion), runId)
-  }
-
-  function moveRegion(dx, dy) {
-    setScanRegion((current) => constrainRegion({
-      ...current,
-      x: current.x + dx,
-      y: current.y + dy
-    }))
-  }
-
-  function zoomRegion(delta) {
-    setScanRegion((current) => {
-      const nextWidth = Math.max(0.24, Math.min(0.86, current.width + delta))
-      const nextHeight = Math.max(0.16, Math.min(0.56, current.height + delta * 0.62))
-      return constrainRegion({
-        x: current.x + (current.width - nextWidth) / 2,
-        y: current.y + (current.height - nextHeight) / 2,
-        width: nextWidth,
-        height: nextHeight
-      })
-    })
+    runOcr(createOcrImageVariants(canvas), runId)
   }
 
   function goBack() {
@@ -405,7 +388,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
   return (
     <>
-      <TopBar title="Escanear articulos" subtitle="Camara real / captura asistida" onBack={goBack} />
+      <TopBar title="Escanear articulos" subtitle="Leer etiquetas" onBack={goBack} />
       <Panel style={styles.panelOuter}>
         <div style={styles.panelInner}>
           <Stack style={styles.stack}>
@@ -421,37 +404,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
                   <Muted>Activa la camara para ver el preview.</Muted>
                 </div>
               )}
-              {(cameraActive || capturedImage) && (
-                <>
-                  <div style={styles.regionShade} />
-                  <div style={regionGuideStyle(scanRegion)}>
-                    <span>Etiqueta</span>
-                  </div>
-                </>
-              )}
             </div>
-
-            {(cameraActive || capturedImage) && (
-              <section style={styles.regionTools}>
-                <div style={styles.detectedHeader}>
-                  <strong>Region OCR</strong>
-                  <span>Acerca el cuadro a la etiqueta</span>
-                </div>
-                <div style={styles.regionGrid}>
-                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0, -0.04)}>Arriba</button>
-                  <button type="button" style={styles.regionButton} onClick={() => zoomRegion(-0.08)}>Zoom +</button>
-                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(-0.04, 0)}>Izq.</button>
-                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0.04, 0)}>Der.</button>
-                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0, 0.04)}>Abajo</button>
-                  <button type="button" style={styles.regionButton} onClick={() => zoomRegion(0.08)}>Zoom -</button>
-                </div>
-                {capturedImage && (
-                  <button type="button" style={styles.reprocessButton} disabled={isOcrReading} onClick={reprocessRegion}>
-                    {isOcrReading ? 'Leyendo...' : 'Releer etiqueta'}
-                  </button>
-                )}
-              </section>
-            )}
 
             <div style={styles.statusBox}>
               <strong>{cameraMessage}</strong>
@@ -469,35 +422,38 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
             </div>
 
             {capturedImage && (
-              <button type="button" style={styles.retakeButton} onClick={repeatCapture}>
-                Repetir captura
-              </button>
+              <div style={styles.primaryScanActions}>
+                <button type="button" style={styles.aiButton} disabled={isAiAnalyzing} onClick={analyzeWithAi}>
+                  {isAiAnalyzing ? 'Analizando con IA...' : 'Analizar con IA'}
+                </button>
+                {isAiAnalyzing && (
+                  <button type="button" style={styles.aiCancelButton} onClick={cancelAiAnalysis}>
+                    Cancelar
+                  </button>
+                )}
+                {showBasicRead && !isAiAnalyzing && (
+                  <button type="button" style={styles.basicReadButton} disabled={isOcrReading} onClick={runBasicRead}>
+                    {isOcrReading ? 'Intentando lectura...' : 'Intentar lectura basica'}
+                  </button>
+                )}
+                <button type="button" style={styles.retakeButton} onClick={repeatCapture}>
+                  Repetir captura
+                </button>
+              </div>
             )}
 
             <canvas ref={canvasRef} style={styles.canvas} />
 
             <section style={styles.assistBox}>
               <div style={styles.detectedHeader}>
-                <strong>Captura asistida</strong>
+                <strong>Sugerencias</strong>
                 <span>{isAiAnalyzing ? 'Analizando...' : isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
-              {capturedImage && (
-                <div style={styles.aiActions}>
-                  <button type="button" style={styles.aiButton} disabled={isAiAnalyzing} onClick={analyzeWithAi}>
-                    {isAiAnalyzing ? 'Leyendo etiquetas...' : 'Analizar con IA'}
-                  </button>
-                  {isAiAnalyzing && (
-                    <button type="button" style={styles.aiCancelButton} onClick={cancelAiAnalysis}>
-                      Cancelar
-                    </button>
-                  )}
-                </div>
-              )}
-              {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando etiqueta...</div>}
-              {isOcrReading && <div style={styles.ocrStatus}>Leyendo etiqueta seleccionada...</div>}
+              {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando con IA...</div>}
+              {isOcrReading && <div style={styles.ocrStatus}>Buscando sugerencias...</div>}
               {ocrDetectedCodes.length > 0 && (
                 <div style={styles.ocrCodes}>
-                  <span>Posibles codigos detectados</span>
+                  <span>Sugerencias detectadas</span>
                   <div style={styles.ocrChipGrid}>
                     {ocrDetectedCodes.map((code) => (
                       <button
@@ -607,27 +563,6 @@ function buildHistoryLabel(parsed, unitPrice) {
   return `${parsed.code}${unitPrice ? ` $${unitPrice}` : ''}`
 }
 
-function constrainRegion(region) {
-  const width = Math.max(0.2, Math.min(0.9, region.width))
-  const height = Math.max(0.14, Math.min(0.62, region.height))
-  return {
-    width,
-    height,
-    x: Math.max(0.02, Math.min(0.98 - width, region.x)),
-    y: Math.max(0.02, Math.min(0.98 - height, region.y))
-  }
-}
-
-function regionGuideStyle(region) {
-  return {
-    ...styles.regionGuide,
-    left: `${region.x * 100}%`,
-    top: `${region.y * 100}%`,
-    width: `${region.width * 100}%`,
-    height: `${region.height * 100}%`
-  }
-}
-
 function normalizeAiItems(items) {
   return items
     .map((item) => {
@@ -719,68 +654,6 @@ const styles = {
     pointerEvents: 'none',
     touchAction: 'pan-y'
   },
-  regionShade: {
-    position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, rgba(0,0,0,0.06), rgba(0,0,0,0.2))',
-    pointerEvents: 'none'
-  },
-  regionGuide: {
-    position: 'absolute',
-    border: '2px solid #10B981',
-    borderRadius: 18,
-    boxShadow: '0 0 0 999px rgba(0, 0, 0, 0.24), 0 0 0 4px rgba(16, 185, 129, 0.18)',
-    display: 'grid',
-    placeItems: 'center',
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 820,
-    textTransform: 'uppercase',
-    letterSpacing: 0,
-    pointerEvents: 'none',
-    boxSizing: 'border-box',
-    textShadow: '0 1px 4px rgba(0,0,0,0.45)'
-  },
-  regionTools: {
-    border: '1px solid #e4e4e4',
-    borderRadius: 22,
-    background: '#ffffff',
-    padding: 12,
-    display: 'grid',
-    gap: 10,
-    minWidth: 0,
-    maxWidth: '100%',
-    boxSizing: 'border-box'
-  },
-  regionGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: 8,
-    minWidth: 0,
-    maxWidth: '100%'
-  },
-  regionButton: {
-    minHeight: 42,
-    border: '1px solid #111111',
-    borderRadius: 16,
-    background: '#ffffff',
-    color: '#111111',
-    fontSize: 13,
-    fontWeight: 760,
-    boxSizing: 'border-box',
-    minWidth: 0
-  },
-  reprocessButton: {
-    width: '100%',
-    minHeight: 50,
-    border: '1px solid #0EA371',
-    borderRadius: 18,
-    background: '#10B981',
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: 780,
-    boxSizing: 'border-box'
-  },
   statusBox: {
     border: '1px solid #0EA371',
     borderRadius: 20,
@@ -794,6 +667,15 @@ const styles = {
     boxSizing: 'border-box',
     maxWidth: '100%',
     minWidth: 0
+  },
+  primaryScanActions: {
+    width: '100%',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 9,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   cameraActions: {
     width: '100%',
@@ -887,6 +769,18 @@ const styles = {
     maxWidth: '100%',
     fontSize: 14,
     fontWeight: 720
+  },
+  basicReadButton: {
+    width: '100%',
+    minHeight: 46,
+    border: '1px solid #d7d7d7',
+    borderRadius: 17,
+    background: '#f7f7f7',
+    color: '#111111',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    fontSize: 14,
+    fontWeight: 700
   },
   ocrStatus: {
     border: '1px solid #0EA371',
