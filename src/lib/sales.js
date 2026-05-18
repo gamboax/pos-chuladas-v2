@@ -110,10 +110,12 @@ export async function retryPendingLocalSales(filters = {}) {
 export async function fetchTodayAdminData(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
   const dateFilter = typeof filters === 'object' ? filters.date : ''
+  const monthFilter = typeof filters === 'object' ? filters.month : ''
+  const rangeFilter = typeof filters === 'object' ? filters.range : null
 
   if (!hasSupabaseConfig || !supabase) {
     const localSales = readLocalSales()
-      .filter((sale) => isSaleInDate(sale, dateFilter))
+      .filter((sale) => isSaleInRange(sale, { date: dateFilter, month: monthFilter, range: rangeFilter }))
       .filter((sale) => matchesCity(sale, cityFilter))
 
     return {
@@ -125,9 +127,7 @@ export async function fetchTodayAdminData(filters = {}) {
     }
   }
 
-  const start = startOfDay(dateFilter)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 1)
+  const { start, end } = resolveDateRange({ date: dateFilter, month: monthFilter, range: rangeFilter })
 
   let expensesQuery = supabase
     .from('expenses')
@@ -162,7 +162,7 @@ export async function fetchTodayAdminData(filters = {}) {
       return {
         storage: 'local',
         reason: offlineReason(),
-        sales: readLocalSales().filter((sale) => isSaleInDate(sale, dateFilter)).filter((sale) => matchesCity(sale, cityFilter)),
+        sales: readLocalSales().filter((sale) => isSaleInRange(sale, { date: dateFilter, month: monthFilter, range: rangeFilter })).filter((sale) => matchesCity(sale, cityFilter)),
         expenses: [],
         cashCuts: []
       }
@@ -172,7 +172,7 @@ export async function fetchTodayAdminData(filters = {}) {
       return {
         storage: 'local',
         reason: 'La tabla sales no existe o no esta expuesta en Supabase.',
-        sales: readLocalSales().filter((sale) => isSaleInDate(sale, dateFilter)).filter((sale) => matchesCity(sale, cityFilter)),
+        sales: readLocalSales().filter((sale) => isSaleInRange(sale, { date: dateFilter, month: monthFilter, range: rangeFilter })).filter((sale) => matchesCity(sale, cityFilter)),
         expenses: [],
         cashCuts: []
       }
@@ -898,19 +898,54 @@ function matchesCity(row, city) {
   return String(row.city || '').trim().toLowerCase() === city.trim().toLowerCase()
 }
 
-function isSaleInDate(sale, dateFilter) {
+function isSaleInRange(sale, filters = {}) {
   const createdAt = new Date(sale.created_at)
-  const start = startOfDay(dateFilter)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 1)
+  const { start, end } = resolveDateRange(filters)
 
   return createdAt >= start && createdAt < end
+}
+
+function resolveDateRange(filters = {}) {
+  if (filters.range?.start && filters.range?.end) {
+    return {
+      start: startOfDay(filters.range.start),
+      end: endOfDayExclusive(filters.range.end)
+    }
+  }
+
+  if (filters.month) {
+    const start = startOfMonth(filters.month)
+    const end = new Date(start)
+    end.setMonth(end.getMonth() + 1)
+    return { start, end }
+  }
+
+  const start = startOfDay(filters.date)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return { start, end }
 }
 
 function startOfDay(dateFilter) {
   const date = dateFilter ? new Date(`${dateFilter}T00:00:00`) : new Date()
   date.setHours(0, 0, 0, 0)
   return date
+}
+
+function endOfDayExclusive(dateFilter) {
+  const end = startOfDay(dateFilter)
+  end.setDate(end.getDate() + 1)
+  return end
+}
+
+function startOfMonth(monthFilter) {
+  const [year, month] = String(monthFilter || '').split('-').map(Number)
+  if (!year || !month) {
+    const current = new Date()
+    return new Date(current.getFullYear(), current.getMonth(), 1)
+  }
+
+  return new Date(year, month - 1, 1)
 }
 
 function itemSubtotal(item) {
