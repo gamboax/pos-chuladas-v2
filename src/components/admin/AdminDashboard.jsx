@@ -92,6 +92,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
   const metrics = useMemo(() => buildMetrics(summary.sales, summary.expenses, summary.cashCuts), [summary.sales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
+  const operationalAnalytics = useMemo(() => buildOperationalAnalytics(summary.sales, summary.expenses, inventory), [summary.sales, summary.expenses, inventory])
   const visibleTickets = useMemo(() => filterTickets(summary.sales, ticketSearch), [summary.sales, ticketSearch])
   const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
   const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
@@ -284,6 +285,94 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
             <section style={styles.cleanSection}>
               <div style={styles.sectionHead}>
+                <h2 style={styles.sectionTitle}>Pulso operativo</h2>
+                <span style={styles.chip}>Ahora</span>
+              </div>
+              <div style={styles.grid}>
+                <Metric label="Ultima hora" value={money(operationalAnalytics.lastHourSales)} />
+                <Metric label="Tickets 1h" value={operationalAnalytics.lastHourTickets} />
+                <Metric label="Pago dominante" value={operationalAnalytics.dominantPayment || 'Sin datos'} />
+                <Metric label="Categoria top" value={operationalAnalytics.topCategory?.name || 'Sin datos'} />
+                <Metric label="Utilidad tiempo real" value={money(operationalAnalytics.estimatedProfit)} />
+                <Metric label="Ticket actual" value={money(metrics.averageTicket)} />
+              </div>
+            </section>
+
+            <section style={styles.cleanSection}>
+              <div style={styles.sectionHead}>
+                <h2 style={styles.sectionTitle}>Insights rapidos</h2>
+                <span style={styles.chip}>{operationalAnalytics.insights.length}</span>
+              </div>
+              {operationalAnalytics.insights.length === 0 ? (
+                <div style={styles.empty}>Aun falta movimiento para generar insights.</div>
+              ) : (
+                <div style={styles.insightStack}>
+                  {operationalAnalytics.insights.map((insight) => <div key={insight} style={styles.insightPill}>{insight}</div>)}
+                </div>
+              )}
+            </section>
+
+            <section style={styles.cleanSection}>
+              <div style={styles.sectionHead}>
+                <h2 style={styles.sectionTitle}>Articulos por categoria</h2>
+                <span style={styles.chip}>{operationalAnalytics.categoryRows.length}</span>
+              </div>
+              {operationalAnalytics.categoryRows.length === 0 ? (
+                <div style={styles.empty}>Sin articulos detallados todavia.</div>
+              ) : (
+                <div style={styles.miniBars}>
+                  {operationalAnalytics.categoryRows.slice(0, 8).map((category) => (
+                    <CategoryRow key={category.name} category={category} max={operationalAnalytics.topCategorySales} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section style={styles.cleanSection}>
+              <div style={styles.sectionHead}>
+                <h2 style={styles.sectionTitle}>Heat operacional</h2>
+                <span style={styles.chip}>Por hora</span>
+              </div>
+              {operationalAnalytics.hourly.length === 0 ? (
+                <div style={styles.empty}>Sin tickets por hora todavia.</div>
+              ) : (
+                <div style={styles.miniBars}>
+                  {operationalAnalytics.hourly.map((hour) => <MiniBar key={hour.hour} item={hour} max={operationalAnalytics.maxHourlySales} />)}
+                </div>
+              )}
+            </section>
+
+            <section style={styles.cleanSection}>
+              <div style={styles.sectionHead}>
+                <h2 style={styles.sectionTitle}>Clientes</h2>
+                <span style={styles.chip}>{operationalAnalytics.customerMetrics.captured}</span>
+              </div>
+              <div style={styles.grid}>
+                <Metric label="Capturados" value={operationalAnalytics.customerMetrics.captured} />
+                <Metric label="Repetidos" value={operationalAnalytics.customerMetrics.repeatCustomers} />
+                <Metric label="Prom. cliente" value={money(operationalAnalytics.customerMetrics.averagePerCustomer)} />
+                <Metric label="Top comprador" value={operationalAnalytics.customerMetrics.topCustomer?.name || 'Sin datos'} />
+              </div>
+            </section>
+
+            {(isSuperAdmin || isInvestor) && (
+              <section style={styles.cleanSection}>
+                <div style={styles.sectionHead}>
+                  <h2 style={styles.sectionTitle}>Rendimiento por ciudad</h2>
+                  <span style={styles.chip}>{operationalAnalytics.cityRanking.length}</span>
+                </div>
+                {operationalAnalytics.cityRanking.length === 0 ? (
+                  <div style={styles.empty}>Sin ciudades para comparar.</div>
+                ) : (
+                  operationalAnalytics.cityRanking.slice(0, 6).map((city) => (
+                    <RankRow key={city.city} city={city} max={operationalAnalytics.topCitySales} />
+                  ))
+                )}
+              </section>
+            )}
+
+            <section style={styles.cleanSection}>
+              <div style={styles.sectionHead}>
                 <h2 style={styles.sectionTitle}>Metodos de pago</h2>
               </div>
               {Object.keys(metrics.byPayment).length === 0 ? (
@@ -304,7 +393,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               ) : (
                 visibleTickets.slice(0, 8).map((sale) => <TicketRow key={sale.id} sale={sale} onSelect={setSelectedTicket} />)
               )}
-              {selectedTicket && <TicketDetail sale={selectedTicket} onClose={() => setSelectedTicket(null)} />}
+              {selectedTicket && <TicketDetail sale={selectedTicket} inventory={inventory} onClose={() => setSelectedTicket(null)} />}
             </section>
             {canManageOps && !isSuperAdmin && (
               <>
@@ -433,6 +522,54 @@ function DataRow({ label, value, strong = false }) {
   )
 }
 
+function MiniBar({ item, max }) {
+  const width = max > 0 ? Math.max(7, (item.sales / max) * 100) : 7
+
+  return (
+    <div style={styles.miniBarRow}>
+      <span>{item.label}</span>
+      <div style={styles.miniBarTrack}>
+        <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
+      </div>
+      <strong>{item.tickets}</strong>
+    </div>
+  )
+}
+
+function RankRow({ city, max }) {
+  const width = max > 0 ? Math.max(7, (city.totalSold / max) * 100) : 7
+
+  return (
+    <div style={styles.rankRow}>
+      <div style={styles.rankTop}>
+        <strong>{city.city}</strong>
+        <span>{money(city.totalSold)}</span>
+      </div>
+      <div style={styles.miniBarTrack}>
+        <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
+      </div>
+      <small>{city.salesCount} ticket(s) / Prom. {money(city.averageTicket)} / Util. {money(city.estimatedProfit)}</small>
+    </div>
+  )
+}
+
+function CategoryRow({ category, max }) {
+  const width = max > 0 ? Math.max(7, (category.sales / max) * 100) : 7
+
+  return (
+    <div style={styles.rankRow}>
+      <div style={styles.rankTop}>
+        <strong>{category.name}</strong>
+        <span>{money(category.sales)}</span>
+      </div>
+      <div style={styles.miniBarTrack}>
+        <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
+      </div>
+      <small>{category.quantity} articulo(s) vendidos</small>
+    </div>
+  )
+}
+
 function TicketRow({ sale, onSelect }) {
   const time = sale.created_at ? new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''
   return (
@@ -449,19 +586,292 @@ function TicketRow({ sale, onSelect }) {
   )
 }
 
-function TicketDetail({ sale, onClose }) {
+function TicketDetail({ sale, inventory, onClose }) {
+  const detail = buildTicketAnalytics(sale, inventory)
+  const timestamp = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
+
   return (
     <section style={styles.detailBox}>
       <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Detalle ticket</h2><button type="button" style={styles.linkButton} onClick={onClose}>Cerrar</button></div>
       <DataRow label="Folio" value={sale.folio || 'Sin folio'} />
       <DataRow label="Total" value={money(sale.total)} strong />
       <DataRow label="Pago" value={sale.payment_method || 'Sin metodo'} />
+      <DataRow label="Ciudad/evento" value={sale.city || 'Sin ciudad'} />
+      <DataRow label="Fecha/hora" value={timestamp} />
+      <DataRow label="Categorias" value={detail.categories || 'Sin detalle'} />
+      <DataRow label="Utilidad est." value={money(detail.estimatedProfit)} strong />
       <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
       <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
       <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
     </section>
   )
 }
+
+function buildOperationalAnalytics(sales, expenses, inventory) {
+  const now = new Date()
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  const lastHourSalesList = sales.filter((sale) => saleDate(sale) >= oneHourAgo)
+  const previousHourSalesList = sales.filter((sale) => {
+    const date = saleDate(sale)
+    return date >= twoHoursAgo && date < oneHourAgo
+  })
+  const totalSold = sales.reduce((sum, sale) => sum + saleTotal(sale), 0)
+  const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+  const paymentTotals = groupPaymentTotals(sales)
+  const categoryRows = buildCategoryRows(sales)
+  const categoryTotals = Object.fromEntries(categoryRows.map((category) => [category.name, category.sales]))
+  const materialTotals = groupItemTotals(sales, 'material')
+  const hourly = buildHourlyStats(sales)
+  const cityRanking = buildCityRanking(sales, totalExpenses)
+  const customerMetrics = buildCustomerMetrics(sales)
+  const estimatedProfit = estimateSalesProfit(sales, inventory) - totalExpenses
+  const topCategory = categoryRows[0] ? { name: categoryRows[0].name, value: categoryRows[0].sales, quantity: categoryRows[0].quantity } : null
+  const topMaterial = topEntry(materialTotals)
+  const dominantPayment = topEntry(paymentTotals)?.name || ''
+  const insights = buildInsights({
+    sales,
+    totalSold,
+    topCategory,
+    topMaterial,
+    dominantPayment,
+    paymentTotals,
+    cityRanking,
+    lastHourSalesList,
+    previousHourSalesList
+  })
+
+  return {
+    lastHourSales: lastHourSalesList.reduce((sum, sale) => sum + saleTotal(sale), 0),
+    lastHourTickets: lastHourSalesList.length,
+    dominantPayment,
+    topCategory,
+    categoryRows,
+    categoryTotals,
+    materialTotals,
+    hourly,
+    maxHourlySales: hourly.reduce((max, hour) => Math.max(max, hour.sales), 0),
+    estimatedProfit,
+    insights,
+    customerMetrics,
+    cityRanking,
+    topCitySales: cityRanking.reduce((max, city) => Math.max(max, city.totalSold), 0),
+    topCategorySales: categoryRows.reduce((max, category) => Math.max(max, category.sales), 0)
+  }
+}
+
+function buildInsights(context) {
+  const insights = []
+  const cashTotal = Number(context.paymentTotals.Efectivo || 0)
+
+  if (context.topCategory && context.totalSold > 0) {
+    const percent = Math.round((context.topCategory.value / context.totalSold) * 100)
+    insights.push(`${context.topCategory.name} son ${percent}% de ventas`)
+  }
+
+  if (context.topMaterial && context.topMaterial.value > 0) {
+    insights.push(`${context.topMaterial.name} domina hoy`)
+  }
+
+  if (context.lastHourSalesList.length && context.previousHourSalesList.length) {
+    const currentAverage = averageSaleValue(context.lastHourSalesList)
+    const previousAverage = averageSaleValue(context.previousHourSalesList)
+    if (currentAverage > previousAverage * 1.1) insights.push('Ticket promedio subiendo')
+  }
+
+  if (context.totalSold > 0 && cashTotal / context.totalSold >= 0.55) {
+    insights.push('Muchos pagos en efectivo')
+  }
+
+  if (context.cityRanking.length > 1) {
+    insights.push(`${context.cityRanking[0].city} trae mejor rendimiento`)
+  }
+
+  if (!insights.length && context.sales.length > 0) {
+    insights.push('Evento activo con datos suficientes para operar')
+  }
+
+  return insights.slice(0, 5)
+}
+
+function buildHourlyStats(sales) {
+  const rows = new Map()
+
+  sales.forEach((sale) => {
+    const date = saleDate(sale)
+    if (Number.isNaN(date.getTime())) return
+    const hour = date.getHours()
+    const current = rows.get(hour) || { hour, label: `${String(hour).padStart(2, '0')}:00`, tickets: 0, sales: 0 }
+    current.tickets += 1
+    current.sales += saleTotal(sale)
+    rows.set(hour, current)
+  })
+
+  return [...rows.values()].sort((a, b) => a.hour - b.hour)
+}
+
+function buildCityRanking(sales, totalExpenses) {
+  const rows = new Map()
+
+  sales.forEach((sale) => {
+    const city = sale.city || 'Sin ciudad'
+    const current = rows.get(city) || { city, salesCount: 0, totalSold: 0, estimatedProfit: 0 }
+    current.salesCount += 1
+    current.totalSold += saleTotal(sale)
+    current.estimatedProfit += estimateSaleProfit(sale)
+    rows.set(city, current)
+  })
+
+  const cityCount = rows.size || 1
+  return [...rows.values()]
+    .map((city) => ({
+      ...city,
+      estimatedProfit: city.estimatedProfit - totalExpenses / cityCount,
+      averageTicket: city.salesCount ? city.totalSold / city.salesCount : 0
+    }))
+    .sort((a, b) => b.totalSold - a.totalSold)
+}
+
+function buildCustomerMetrics(sales) {
+  const customers = new Map()
+
+  sales.forEach((sale) => {
+    const key = customerKey(sale)
+    if (!key) return
+    const name = sale.customer_name || sale.customer_whatsapp || 'Cliente'
+    const current = customers.get(key) || { name, count: 0, total: 0 }
+    current.count += 1
+    current.total += saleTotal(sale)
+    customers.set(key, current)
+  })
+
+  const customerRows = [...customers.values()].sort((a, b) => b.total - a.total)
+  const captured = customerRows.length
+  return {
+    captured,
+    repeatCustomers: customerRows.filter((customer) => customer.count > 1).length,
+    averagePerCustomer: captured ? customerRows.reduce((sum, customer) => sum + customer.total, 0) / captured : 0,
+    topCustomer: customerRows[0] || null
+  }
+}
+
+function groupPaymentTotals(sales) {
+  return sales.reduce((acc, sale) => {
+    const key = sale.payment_method || sale.paymentMethod || 'Sin metodo'
+    acc[key] = (acc[key] || 0) + saleTotal(sale)
+    return acc
+  }, {})
+}
+
+function groupItemTotals(sales, field) {
+  const totals = {}
+
+  sales.forEach((sale) => {
+    saleItemsOf(sale).forEach((item) => {
+      const key = item[field] || 'Sin dato'
+      if (key === 'Sin dato') return
+      totals[key] = (totals[key] || 0) + itemLineTotal(item)
+    })
+  })
+
+  return totals
+}
+
+function buildCategoryRows(sales) {
+  const rows = new Map()
+
+  sales.forEach((sale) => {
+    saleItemsOf(sale).forEach((item) => {
+      const name = item.category || 'Sin categoria'
+      const current = rows.get(name) || { name, quantity: 0, sales: 0 }
+      current.quantity += Number(item.quantity || 0)
+      current.sales += itemLineTotal(item)
+      rows.set(name, current)
+    })
+  })
+
+  return [...rows.values()].sort((a, b) => b.sales - a.sales)
+}
+
+function topEntry(totals) {
+  const [name, value] = Object.entries(totals).sort((a, b) => b[1] - a[1])[0] || []
+  return name ? { name, value } : null
+}
+
+function buildTicketAnalytics(sale, inventory) {
+  const items = saleItemsOf(sale)
+  const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].join(', ')
+  return {
+    categories,
+    estimatedProfit: estimateSaleProfit(sale, inventory)
+  }
+}
+
+function estimateSalesProfit(sales, inventory) {
+  return sales.reduce((sum, sale) => sum + estimateSaleProfit(sale, inventory), 0)
+}
+
+function estimateSaleProfit(sale, inventory = {}) {
+  const items = saleItemsOf(sale)
+  const codeCosts = buildCodeCostMap(inventory)
+
+  if (!items.length) {
+    const total = saleTotal(sale)
+    return total - total / 3
+  }
+
+  return items.reduce((sum, item) => {
+    const subtotal = itemLineTotal(item)
+    const quantity = Number(item.quantity || 0)
+    const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
+    const fallbackCost = subtotal / 3
+    return sum + subtotal - (unitCost > 0 ? unitCost * quantity : fallbackCost)
+  }, 0)
+}
+
+function buildCodeCostMap(inventory = {}) {
+  const map = new Map()
+
+  ;(inventory.productCodes || []).forEach((code) => {
+    if (code.code && Number(code.unit_cost || 0) > 0) map.set(normalizeCode(code.code), Number(code.unit_cost))
+  })
+
+  ;(inventory.lotItems || []).forEach((item) => {
+    if (item.code && Number(item.unit_cost || 0) > 0) map.set(normalizeCode(item.code), Number(item.unit_cost))
+  })
+
+  return map
+}
+
+function saleItemsOf(sale) {
+  return sale.items || sale.sale_items || []
+}
+
+function saleTotal(sale) {
+  return Number(sale.total || 0)
+}
+
+function itemLineTotal(item) {
+  const quantity = Number(item.quantity || 0)
+  const unitPrice = Number(item.unit_price ?? item.unitPrice ?? 0)
+  return Number(item.subtotal ?? item.line_total ?? quantity * unitPrice)
+}
+
+function saleDate(sale) {
+  return new Date(sale.created_at || Date.now())
+}
+
+function averageSaleValue(sales) {
+  return sales.length ? sales.reduce((sum, sale) => sum + saleTotal(sale), 0) / sales.length : 0
+}
+
+function customerKey(sale) {
+  const whatsapp = String(sale.customer_whatsapp || '').replace(/\D/g, '')
+  if (whatsapp) return `wa:${whatsapp}`
+  const name = String(sale.customer_name || '').trim().toLowerCase()
+  return name ? `name:${name}` : ''
+}
+
 function buildMetrics(sales, expenses, cashCuts) {
   const salesCount = sales.length
   const totalSold = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
@@ -601,6 +1011,14 @@ const styles = {
   chip: { border: '1px solid #d7d7d7', borderRadius: 999, padding: '6px 10px', background: '#f7f7f7', color: '#555555', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' },
   grid: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, minWidth: 0 },
   metricCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 13, display: 'grid', gap: 5, boxShadow: '0 7px 16px rgba(17, 17, 17, 0.035)', minWidth: 0, overflow: 'hidden' },
+  insightStack: { display: 'grid', gap: 8, minWidth: 0, maxWidth: '100%' },
+  insightPill: { border: '1px solid #0EA371', borderRadius: 18, background: '#DFF8EC', color: '#064E3B', padding: '11px 12px', fontSize: 14, fontWeight: 720, lineHeight: 1.25, boxSizing: 'border-box', maxWidth: '100%', overflowWrap: 'anywhere' },
+  miniBars: { display: 'grid', gap: 9, minWidth: 0, maxWidth: '100%' },
+  miniBarRow: { display: 'grid', gridTemplateColumns: '48px minmax(0, 1fr) 28px', alignItems: 'center', gap: 8, color: '#333333', fontSize: 13, fontWeight: 700, minWidth: 0 },
+  miniBarTrack: { width: '100%', height: 10, borderRadius: 999, background: '#eeeeee', overflow: 'hidden', minWidth: 0 },
+  miniBarFill: { height: '100%', borderRadius: 999, background: '#10B981' },
+  rankRow: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 12, display: 'grid', gap: 8, minWidth: 0, boxSizing: 'border-box' },
+  rankTop: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 10, alignItems: 'center', minWidth: 0, overflowWrap: 'anywhere' },
   dataRow: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, padding: '11px 0', borderTop: '1px solid #eeeeee', fontSize: 15, color: '#333333', minWidth: 0, overflowWrap: 'anywhere' },
   ticketRow: { width: '100%', maxWidth: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 12, padding: '12px 0', border: 'none', borderTop: '1px solid #eeeeee', background: 'transparent', fontSize: 14, minWidth: 0, textAlign: 'left', boxSizing: 'border-box' },
   ticketInfo: { display: 'grid', gap: 3, minWidth: 0, overflow: 'hidden' },

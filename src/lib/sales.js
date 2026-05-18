@@ -183,6 +183,13 @@ export async function fetchTodayAdminData(filters = {}) {
     throw new Error(friendlySupabaseMessage(salesResult.error) || 'No se pudieron cargar ventas del dia.')
   }
 
+  let saleItemsResult = { data: [], error: null }
+  const saleIds = (salesResult.data || []).map((sale) => sale.id).filter(Boolean)
+
+  if (saleIds.length) {
+    saleItemsResult = await fetchSaleItemsForSales(saleIds)
+  }
+
   if (expensesResult.error && !isMissingSchemaError(expensesResult.error)) {
     logSupabaseError('[Supabase fetchTodayAdminData] expenses select failed:', expensesResult.error)
     if (!isNetworkError(expensesResult.error)) {
@@ -199,9 +206,9 @@ export async function fetchTodayAdminData(filters = {}) {
 
   return {
     storage: 'supabase',
-    reason: buildAdminDataReason(expensesResult.error, cashCutsResult.error),
+    reason: buildAdminDataReason(expensesResult.error, cashCutsResult.error, saleItemsResult.error),
     city: cityFilter || '',
-    sales: salesResult.data || [],
+    sales: attachSaleItems(salesResult.data || [], saleItemsResult.data || []),
     expenses: expensesResult.error ? [] : expensesResult.data || [],
     cashCuts: cashCutsResult.error ? [] : cashCutsResult.data || []
   }
@@ -505,6 +512,50 @@ async function insertSaleItemsWithCompatibleColumns(items) {
     error: new Error('No se pudo adaptar el guardado a las columnas disponibles en sale_items.')
   }
 }
+
+async function fetchSaleItemsForSales(saleIds) {
+  const baseColumns = ['id', 'sale_id', 'category', 'quantity', 'unit_price', 'subtotal', 'material', 'code_detected', 'capture_origin', 'created_at']
+  let optionalColumns = ['unit_cost', 'estimated_profit', 'product_code_id', 'purchase_lot_item_id']
+
+  while (true) {
+    const selectColumns = [...baseColumns, ...optionalColumns].join(', ')
+    const { data, error } = await supabase
+      .from('sale_items')
+      .select(selectColumns)
+      .in('sale_id', saleIds)
+
+    if (!error) return { data, error: null }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+
+    if (missingColumn) {
+      optionalColumns = optionalColumns.filter((column) => column !== missingColumn)
+      continue
+    }
+
+    if (!isMissingSchemaError(error)) {
+      logSupabaseError('[Supabase fetchTodayAdminData] sale_items select failed:', error)
+    }
+
+    return { data: [], error }
+  }
+}
+
+function attachSaleItems(sales, saleItems) {
+  const itemsBySaleId = new Map()
+
+  saleItems.forEach((item) => {
+    const currentItems = itemsBySaleId.get(item.sale_id) || []
+    currentItems.push(item)
+    itemsBySaleId.set(item.sale_id, currentItems)
+  })
+
+  return sales.map((sale) => ({
+    ...sale,
+    items: itemsBySaleId.get(sale.id) || []
+  }))
+}
+
 async function insertWithCompatibleColumns(tableName, payload, optionalColumns) {
   let nextPayload = { ...payload }
 
@@ -772,8 +823,9 @@ function normalizeCode(code) {
   return String(code || '').trim().toUpperCase()
 }
 
-function buildAdminDataReason(expensesError, cashCutsError) {
-  if (isNetworkError(expensesError) || isNetworkError(cashCutsError)) return offlineReason()
+function buildAdminDataReason(expensesError, cashCutsError, saleItemsError) {
+  if (isNetworkError(expensesError) || isNetworkError(cashCutsError) || isNetworkError(saleItemsError)) return offlineReason()
+  if (saleItemsError) return 'No se pudieron cargar articulos de venta; algunos analytics pueden verse incompletos.'
   if (expensesError || cashCutsError) return 'Faltan tablas de gastos/cortes. Ejecuta el ALTER puntual de Supabase.'
   return ''
 }
