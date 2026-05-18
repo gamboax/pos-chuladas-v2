@@ -476,6 +476,8 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
       {screen === 'scanner' && (
         <Suspense fallback={<ScannerLoadingView activeCity={activeCity} onBack={() => setScreen('cashier')} />}>
           <ScannerPanel
+            city={activeCity}
+            folio={folio}
             items={scannedItems}
             onBack={() => setScreen('cashier')}
             onChange={updateScannedItem}

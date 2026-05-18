@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createOcrImageVariants, recognizeCodesFromImage } from '../../lib/ocr'
+import { createAiLabelImage, createOcrImageVariants, recognizeCodesFromImage } from '../../lib/ocr'
 import { extractProductCodesFromText, lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
 
-export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion, onRemove, onConfirm }) {
+export default function ScannerPanel({ city, folio, items, onBack, onChange, onAddSuggestion, onRemove, onConfirm }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const inputRef = useRef(null)
-const activeSubmitRef = useRef('')
+  const activeSubmitRef = useRef('')
   const ocrRunRef = useRef(0)
+  const aiAbortRef = useRef(null)
   const capturedImageUrlRef = useRef('')
   const [scanRegion, setScanRegion] = useState({ x: 0.24, y: 0.34, width: 0.52, height: 0.28 })
   const [cameraActive, setCameraActive] = useState(false)
@@ -22,6 +23,7 @@ const activeSubmitRef = useRef('')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
   const [isOcrReading, setIsOcrReading] = useState(false)
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false)
   const [ocrDetectedCodes, setOcrDetectedCodes] = useState([])
   const [ocrText, setOcrText] = useState('')
   const [codeHistory, setCodeHistory] = useState([])
@@ -32,6 +34,7 @@ const activeSubmitRef = useRef('')
   useEffect(() => {
     return () => {
       ocrRunRef.current += 1
+      cancelAiAnalysis()
       stopCamera(false)
       revokeCapturedImage()
     }
@@ -163,9 +166,73 @@ const activeSubmitRef = useRef('')
     }
   }
 
+  async function analyzeWithAi() {
+    const canvas = canvasRef.current
+    if (!canvas || !capturedImage || isAiAnalyzing) return
+
+    cancelAiAnalysis()
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 18000)
+    aiAbortRef.current = controller
+    setIsAiAnalyzing(true)
+    setAssistError('')
+    setCameraMessage('Analizando etiqueta...')
+    setAssistMessage('Leyendo etiquetas con IA...')
+
+    try {
+      const image = createAiLabelImage(canvas, scanRegion)
+      const response = await fetch('/api/analyze-label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, city, folio }),
+        signal: controller.signal
+      })
+      const payload = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(payload.message || 'No pude leerlo bien, corrige manualmente.')
+      }
+
+      const suggested = normalizeAiItems(payload.items || [])
+      setOcrDetectedCodes(suggested)
+      setOcrText(payload.message || '')
+
+      if (!suggested.length) {
+        setAssistMessage(payload.message || 'No pude leerlo bien, corrige manualmente.')
+        setCameraMessage('Sin sugerencias claras. Corrige manualmente.')
+        return
+      }
+
+      const seen = new Set()
+      for (const parsed of suggested) {
+        if (seen.has(parsed.code)) continue
+        seen.add(parsed.code)
+        await addDetectedCode(parsed, { silent: true })
+      }
+
+      setAssistMessage(`${suggested.length} sugerencia(s) detectada(s). Revisa antes de confirmar.`)
+      setCameraMessage('Sugerencias detectadas. Revisa precios.')
+      vibrateLight()
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        setAssistMessage('Analisis cancelado. Puedes reintentar o corregir manualmente.')
+        setCameraMessage('Analisis cancelado.')
+      } else {
+        setAssistMessage(error.message || 'No pude leerlo bien, corrige manualmente.')
+        setCameraMessage('No pude leerlo bien. Corrige manualmente.')
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (aiAbortRef.current === controller) aiAbortRef.current = null
+      setIsAiAnalyzing(false)
+      window.setTimeout(() => inputRef.current?.focus(), 60)
+    }
+  }
+
   async function startCamera() {
     if (streamRef.current) {
       ocrRunRef.current += 1
+      cancelAiAnalysis()
       clearCapturedImage()
       setOcrDetectedCodes([])
       setOcrText('')
@@ -218,6 +285,7 @@ const activeSubmitRef = useRef('')
 
   async function repeatCapture() {
     ocrRunRef.current += 1
+    cancelAiAnalysis()
     clearCapturedImage()
     setCameraError('')
     setIsOcrReading(false)
@@ -322,8 +390,17 @@ const activeSubmitRef = useRef('')
   }
 
   function goBack() {
+    cancelAiAnalysis()
     stopCamera()
     onBack()
+  }
+
+  function cancelAiAnalysis() {
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort()
+      aiAbortRef.current = null
+    }
+    setIsAiAnalyzing(false)
   }
 
   return (
@@ -402,8 +479,21 @@ const activeSubmitRef = useRef('')
             <section style={styles.assistBox}>
               <div style={styles.detectedHeader}>
                 <strong>Captura asistida</strong>
-                <span>{isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
+                <span>{isAiAnalyzing ? 'Analizando...' : isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
+              {capturedImage && (
+                <div style={styles.aiActions}>
+                  <button type="button" style={styles.aiButton} disabled={isAiAnalyzing} onClick={analyzeWithAi}>
+                    {isAiAnalyzing ? 'Leyendo etiquetas...' : 'Analizar con IA'}
+                  </button>
+                  {isAiAnalyzing && (
+                    <button type="button" style={styles.aiCancelButton} onClick={cancelAiAnalysis}>
+                      Cancelar
+                    </button>
+                  )}
+                </div>
+              )}
+              {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando etiqueta...</div>}
               {isOcrReading && <div style={styles.ocrStatus}>Leyendo etiqueta seleccionada...</div>}
               {ocrDetectedCodes.length > 0 && (
                 <div style={styles.ocrCodes}>
@@ -536,6 +626,22 @@ function regionGuideStyle(region) {
     width: `${region.width * 100}%`,
     height: `${region.height * 100}%`
   }
+}
+
+function normalizeAiItems(items) {
+  return items
+    .map((item) => {
+      const raw = [item.code, item.price ? `$${item.price}` : ''].filter(Boolean).join(' ')
+      const parsed = parseProductCode(raw)
+      if (!parsed.ok) return null
+      return {
+        ...parsed,
+        parsedPrice: Number(item.price || parsed.parsedPrice || 0) || null,
+        rawCode: item.raw_text || raw,
+        confidence: Number(item.confidence || 0)
+      }
+    })
+    .filter(Boolean)
 }
 
 function vibrateLight() {
@@ -749,6 +855,38 @@ const styles = {
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box'
+  },
+  aiActions: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 8,
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  aiButton: {
+    width: '100%',
+    minHeight: 54,
+    border: '1px solid #0EA371',
+    borderRadius: 19,
+    background: '#10B981',
+    color: '#ffffff',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    fontSize: 16,
+    fontWeight: 780,
+    boxShadow: '0 12px 22px rgba(16, 185, 129, 0.22)'
+  },
+  aiCancelButton: {
+    width: '100%',
+    minHeight: 46,
+    border: '1px solid #111111',
+    borderRadius: 17,
+    background: '#ffffff',
+    color: '#111111',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    fontSize: 14,
+    fontWeight: 720
   },
   ocrStatus: {
     border: '1px solid #0EA371',

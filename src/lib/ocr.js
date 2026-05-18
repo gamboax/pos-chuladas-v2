@@ -25,6 +25,22 @@ export function createOcrImageVariants(sourceCanvas, region = null) {
   ]
 }
 
+export function createAiLabelImage(sourceCanvas, region = null) {
+  const cropped = cropCanvas(sourceCanvas, region)
+  const maxSide = 900
+  const scale = Math.min(1, maxSide / Math.max(cropped.width, cropped.height, 1))
+  const width = Math.max(1, Math.round(cropped.width * scale))
+  const height = Math.max(1, Math.round(cropped.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(cropped, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', 0.72)
+}
+
 export function preprocessCanvasForOcr(sourceCanvas, options = {}) {
   const mode = options.mode || 'strong'
   const upscale = mode === 'normal' ? 2 : 3
