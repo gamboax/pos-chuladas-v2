@@ -305,3 +305,33 @@ Tablas importantes:
 - priorizar velocidad operativa real
 - optimizar flujo cajera
 - reducir errores humanos
+
+---
+
+# QA OPERATIVO POST-EVENTO
+
+## Roles definitivos
+
+- cashier: caja, resumen del dia, pendientes, cambiar ciudad, cerrar sesion. No ve gastos, utilidad, inventario ni costos.
+- manager / admin_operativo / admin: caja, dashboard operativo, tickets, gastos operativos y corte. No administra lotes ni inventario maestro.
+- super_admin: acceso completo a caja, dashboard, gastos, cortes, inventario, lotes, product_codes, utilidad y ROI.
+- investor: solo lectura de ventas, utilidad estimada, inversion y ROI. No cobra, no edita y no registra operaciones.
+
+## Fallback local seguro
+
+Si Supabase falla al guardar una venta antes de confirmar persistencia real, la venta queda local como `Pendiente de sincronizar`.
+La caja tiene vista `Pendientes` por ciudad/evento y boton `Reintentar sincronizar`.
+No se debe perder carrito si Supabase responde error despues de crear venta pero antes de guardar `sale_items`.
+
+## QA ventas
+
+- Evitar doble guardado con loading/disabled.
+- Cada folio se recuerda localmente para reducir colisiones por ciudad.
+- `sale_items` debe usar el `sale_id` devuelto por `sales`.
+- Ticket y payload de venta deben compartir folio, ciudad, cajera, total, descuento, pago e items.
+
+## Categoria nueva
+
+- `Caja` representa caja de regalo.
+- Debe mostrarse como `Caja` en POS, ticket, resumen y sale_items.
+- No reemplaza ni afecta codigos de scanner existentes.

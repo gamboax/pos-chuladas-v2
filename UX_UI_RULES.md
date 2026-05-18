@@ -260,3 +260,37 @@ La sensación general debe ser:
 8. Mantener consistencia visual.
 9. Pensar en estrés real de eventos.
 10. Cada pantalla debe sentirse intencional.
+---
+
+# QA MOBILE Y ERRORES
+
+## Scroll y touch
+
+La app debe hacer scroll vertical con un dedo en:
+- iPhone Safari
+- iPhone Chrome
+- Android Chrome
+- Samsung Internet
+- Samsung Fold
+
+Reglas:
+- No bloquear scroll vertical global.
+- Usar `overflow-x: hidden` solo para eje horizontal.
+- Mantener `touch-action: pan-y` en superficies principales.
+- Evitar overlays invisibles que capturen gestos.
+- Scanner/camara no debe bloquear scroll al salir.
+
+## Mensajes operativos
+
+Evitar alerts feos. Mostrar mensajes visuales cortos dentro de la app:
+- Guardando...
+- Guardada en Supabase
+- Pendiente de sincronizar
+- Sin conexion con Supabase
+- No hay datos
+- Permiso de camara denegado
+
+## Pantallas compactas
+
+Dashboard, scanner, checkout y venta deben evitar overflow horizontal en 360px, 390px, 414px y 430px.
+Usar cards compactas, detalle progresivo y botones tactiles.

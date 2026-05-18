@@ -123,6 +123,10 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
   async function handleSaveCashCut() {
     if (!canManageOps || savingCashCut) return
+    if (Number(cashCounted || 0) < 0) {
+      setError('El efectivo contado no puede ser negativo.')
+      return
+    }
 
     setSavingCashCut(true)
     setError('')
@@ -192,6 +196,11 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
     if (!lotItemForm.code.trim() || Number(lotItemForm.quantityPurchased) <= 0) {
       setError('Completa codigo y cantidad comprada.')
+      return
+    }
+
+    if (Number(lotItemForm.unitCost || 0) < 0 || Number(lotItemForm.suggestedPrice || 0) < 0) {
+      setError('Costo y precio no pueden ser negativos.')
       return
     }
 
@@ -318,7 +327,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   <DataRow label="Transferencias" value={money(metrics.transferTotal)} />
                   <DataRow label="Tarjeta" value={money(metrics.cardTotal)} />
                   <DataRow label="Gastos en efectivo" value={money(metrics.cashExpenses)} />
-                  <DataRow label="Diferencia" value={money(cutDifference)} strong />
+                  <DataRow label="Diferencia" value={`${money(cutDifference)} / ${cashCutStatus(cutDifference)}`} strong />
                   <textarea value={cashCutNotes} onChange={(event) => setCashCutNotes(event.target.value)} placeholder="Notas del corte" style={styles.textarea} />
                   <button type="button" style={styles.primaryButton} disabled={savingCashCut} onClick={handleSaveCashCut}>{savingCashCut ? 'Guardando...' : 'Guardar corte'}</button>
                 </section>
@@ -391,7 +400,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   <DataRow label="Transferencias" value={money(metrics.transferTotal)} />
                   <DataRow label="Tarjeta" value={money(metrics.cardTotal)} />
                   <DataRow label="Gastos en efectivo" value={money(metrics.cashExpenses)} />
-                  <DataRow label="Diferencia" value={money(cutDifference)} strong />
+                  <DataRow label="Diferencia" value={`${money(cutDifference)} / ${cashCutStatus(cutDifference)}`} strong />
                   <textarea value={cashCutNotes} onChange={(event) => setCashCutNotes(event.target.value)} placeholder="Notas del corte" style={styles.textarea} />
                   <button type="button" style={styles.primaryButton} disabled={savingCashCut} onClick={handleSaveCashCut}>{savingCashCut ? 'Guardando...' : 'Guardar corte'}</button>
                 </section>
@@ -547,6 +556,12 @@ function lotInvestmentOf(lot) {
 
 function lotLabel(lot) {
   return lot.name || lot.supplier || `Lote ${String(lot.id || '').slice(0, 8)}`
+}
+
+function cashCutStatus(value) {
+  if (Number(value) > 0) return 'Sobrante'
+  if (Number(value) < 0) return 'Faltante'
+  return 'Exacto'
 }
 
 function todayInputValue() {

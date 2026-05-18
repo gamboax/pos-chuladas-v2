@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { fetchTodayAdminData, saveSale } from '../lib/sales'
+import { fetchTodayAdminData, getPendingLocalSales, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
@@ -81,6 +81,9 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [summaryError, setSummaryError] = useState('')
   const [selectedSummaryTicket, setSelectedSummaryTicket] = useState(null)
+  const [pendingSales, setPendingSales] = useState([])
+  const [pendingSyncMessage, setPendingSyncMessage] = useState('')
+  const [isSyncingPending, setIsSyncingPending] = useState(false)
 
   const cashierName = user?.name || 'Cajera'
   const cashierId = user?.id || user?.user_id || null
@@ -90,7 +93,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const safeDiscountPercent = Math.max(0, Math.min(100, discountPercent))
   const discountAmount = subtotal * (safeDiscountPercent / 100)
   const total = Math.max(0, subtotal - discountAmount)
-  const menuItems = buildMenuItems({ setScreen, changeCity, onLogout, canSeeAdmin, onOpenAdmin, setMenuOpen })
+  const menuItems = buildMenuItems({ setScreen, changeCity, openPendingSales, onLogout, canSeeAdmin, onOpenAdmin, setMenuOpen })
   const ticketText = lastSale ? buildTicket(lastSale) : ''
 
   useEffect(() => {
@@ -155,6 +158,17 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   }
 
   function changeCity() {
+    setMenuOpen(false)
+
+    if (cart.length) {
+      setScreen('confirmCityChange')
+      return
+    }
+
+    performCityChange()
+  }
+
+  function performCityChange() {
     setCityInput(activeCity)
     setMenuOpen(false)
     clearDraft()
@@ -343,6 +357,30 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     }
   }
 
+  function openPendingSales() {
+    setPendingSales(getPendingLocalSales({ city: activeCity }))
+    setPendingSyncMessage('')
+    setMenuOpen(false)
+    setScreen('pending')
+  }
+
+  async function retryPendingSales() {
+    if (isSyncingPending) return
+
+    setIsSyncingPending(true)
+    setPendingSyncMessage('Sincronizando ventas pendientes...')
+
+    try {
+      const result = await retryPendingLocalSales({ city: activeCity })
+      setPendingSales(getPendingLocalSales({ city: activeCity }))
+      setPendingSyncMessage(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
+    } catch (error) {
+      setPendingSyncMessage(error.message || 'No se pudieron sincronizar las ventas pendientes.')
+    } finally {
+      setIsSyncingPending(false)
+    }
+  }
+
   function sendWhatsApp() {
     if (!lastSale) return
     window.open(buildWhatsAppUrl(lastSale, ticketText), '_blank', 'noopener,noreferrer')
@@ -422,6 +460,25 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         />
       )}
 
+      {screen === 'confirmCityChange' && (
+        <ConfirmCityChangeView
+          city={activeCity}
+          cartCount={cart.length}
+          onCancel={() => setScreen('cashier')}
+          onConfirm={performCityChange}
+        />
+      )}
+
+      {screen === 'pending' && (
+        <PendingSalesView
+          city={activeCity}
+          sales={pendingSales}
+          message={pendingSyncMessage}
+          syncing={isSyncingPending}
+          onBack={() => setScreen('cashier')}
+          onRetry={retryPendingSales}
+        />
+      )}
       {screen === 'summary' && (
         <CashierDaySummaryView
           cashierName={cashierName}
@@ -524,6 +581,56 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   )
 }
 
+function ConfirmCityChangeView({ city, cartCount, onCancel, onConfirm }) {
+  return (
+    <>
+      <HeaderBar title="Cambiar ciudad" subtitle={city} actionLabel="Caja" onAction={onCancel} />
+      <Panel style={styles.warningPanel}>
+        <div style={styles.summaryStack}>
+          <Kicker>Venta en progreso</Kicker>
+          <Title>Se limpiara la venta actual.</Title>
+          <Muted>Tienes {cartCount} articulo(s). Al cambiar ciudad se inicia una venta nueva para no mezclar eventos.</Muted>
+          <div style={styles.bottomActions}>
+            <button type="button" style={styles.bottomButton} onClick={onCancel}>Cancelar</button>
+            <button type="button" style={styles.totalButton} onClick={onConfirm}>Cambiar</button>
+          </div>
+        </div>
+      </Panel>
+    </>
+  )
+}
+
+function PendingSalesView({ city, sales, message, syncing, onBack, onRetry }) {
+  return (
+    <>
+      <HeaderBar title="Pendientes" subtitle={city} actionLabel="Caja" onAction={onBack} />
+      <Panel style={styles.summaryPanel}>
+        <div style={styles.summaryStack}>
+          <div style={styles.summaryHero}>
+            <Kicker>Sincronizacion</Kicker>
+            <div style={styles.summaryCity}>Ventas pendientes</div>
+            <Muted>{sales.length} venta(s) guardada(s) localmente.</Muted>
+          </div>
+          {message && <div style={styles.summaryNotice}>{message}</div>}
+          {sales.length === 0 ? (
+            <div style={styles.summaryEmpty}>No hay ventas pendientes en esta ciudad.</div>
+          ) : (
+            sales.map((sale) => (
+              <div key={sale.id || sale.folio} style={styles.pendingCard}>
+                <strong>{sale.folio}</strong>
+                <span>{money(sale.total)} / {sale.paymentMethod || sale.payment_method || 'Pago'}</span>
+                <small>Pendiente de sincronizar</small>
+              </div>
+            ))
+          )}
+          <button type="button" disabled={!sales.length || syncing} style={{ ...styles.totalButton, opacity: sales.length && !syncing ? 1 : 0.45 }} onClick={onRetry}>
+            {syncing ? 'Sincronizando...' : 'Reintentar sincronizar'}
+          </button>
+        </div>
+      </Panel>
+    </>
+  )
+}
 function CashierDaySummaryView({ cashierName, city, data, loading, error, selectedTicket, onSelectTicket, onBack }) {
   const metrics = useMemo(() => buildCashierMetrics(data.sales || []), [data.sales])
   const visibleTickets = (data.sales || []).slice(0, 8)
@@ -654,7 +761,7 @@ function normalizeItemValue(item, field, value) {
   }
 }
 
-function buildMenuItems({ setScreen, changeCity, onLogout, canSeeAdmin, onOpenAdmin, setMenuOpen }) {
+function buildMenuItems({ setScreen, changeCity, openPendingSales, onLogout, canSeeAdmin, onOpenAdmin, setMenuOpen }) {
   const closeTo = (nextScreen) => {
     setScreen(nextScreen)
     setMenuOpen(false)
@@ -663,6 +770,7 @@ function buildMenuItems({ setScreen, changeCity, onLogout, canSeeAdmin, onOpenAd
   return [
     { label: 'Caja', onClick: () => closeTo('cashier') },
     { label: 'Resumen del dia', onClick: () => closeTo('summary') },
+    { label: 'Pendientes', onClick: openPendingSales },
     { label: 'Cambiar ciudad', onClick: changeCity },
     ...(canSeeAdmin
       ? [
@@ -771,6 +879,13 @@ const styles = {
     fontWeight: 680,
     boxShadow: '0 8px 16px rgba(17, 17, 17, 0.04)',
     transition: 'transform 140ms ease, opacity 140ms ease'
+  },
+  warningPanel: {
+    padding: 20,
+    borderRadius: 30,
+    boxShadow: '0 14px 30px rgba(17, 17, 17, 0.065)',
+    maxWidth: '100%',
+    boxSizing: 'border-box'
   },
   summaryPanel: {
     padding: 18,
@@ -921,6 +1036,16 @@ const styles = {
     fontSize: 14,
     fontWeight: 700,
     textAlign: 'center'
+  },
+  pendingCard: {
+    border: '1px solid #e7e7e7',
+    borderRadius: 18,
+    background: '#fbfbfb',
+    padding: 13,
+    display: 'grid',
+    gap: 4,
+    minWidth: 0,
+    overflowWrap: 'anywhere'
   },
   summaryEmpty: {
     border: '1px dashed #a3a3a3',

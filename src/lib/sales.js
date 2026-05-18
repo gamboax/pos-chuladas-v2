@@ -49,11 +49,11 @@ export async function saveSale(sale) {
 
   if (itemsError) {
     logSupabaseError('[Supabase saveSale] sale_items insert failed:', itemsError, saleItems)
-    if (isMissingSchemaError(itemsError)) {
-      return saveLocalSale(sale, 'La tabla sale_items no existe o no esta expuesta en Supabase.')
-    }
+    const detail = isMissingSchemaError(itemsError)
+      ? 'La tabla sale_items no existe o no esta expuesta en Supabase.'
+      : friendlySupabaseMessage(itemsError)
 
-    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${friendlySupabaseMessage(itemsError)}`)
+    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${detail}`)
   }
 
   await relateSaleItemsToInventory(savedItems || [])
@@ -75,6 +75,37 @@ export async function fetchTodaySalesSummary(filters = {}) {
   }
 }
 
+export function getPendingLocalSales(filters = {}) {
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  return readLocalSales()
+    .filter((sale) => sale.pendingSync !== false)
+    .filter((sale) => matchesCity(sale, cityFilter))
+}
+
+export async function retryPendingLocalSales(filters = {}) {
+  requireSupabase('sincronizar ventas pendientes')
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  const pendingSales = getPendingLocalSales({ city: cityFilter })
+  const synced = []
+  const failed = []
+
+  for (const sale of pendingSales) {
+    try {
+      const result = await saveSaleToSupabase(normalizeLocalSaleForSync(sale))
+      synced.push({ localId: sale.id, folio: sale.folio, result })
+    } catch (error) {
+      failed.push({ sale, error: error.message || 'No se pudo sincronizar.' })
+    }
+  }
+
+  if (synced.length) {
+    const syncedIds = new Set(synced.map((item) => item.localId))
+    const remaining = readLocalSales().filter((sale) => !syncedIds.has(sale.id))
+    writeLocalSales(remaining)
+  }
+
+  return { synced, failed, total: pendingSales.length }
+}
 export async function fetchTodayAdminData(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
 
@@ -529,19 +560,7 @@ async function ensureProductCode(item) {
   }
 
   if (existing?.id) {
-    const { data: updated, error: updateError } = await supabase
-      .from('product_codes')
-      .update(payload)
-      .eq('id', existing.id)
-      .select('*')
-      .single()
-
-    if (updateError && !isMissingSchemaError(updateError)) {
-      logSupabaseError('[Supabase ensureProductCode] update failed:', updateError, payload)
-      throw new Error(buildSupabaseModuleError(updateError, 'codigo de producto'))
-    }
-
-    return updated || existing
+    throw new Error(`El codigo ${code} ya existe en product_codes. Usa otro codigo o revisa el lote anterior.`)
   }
 
   const result = await insertWithCompatibleColumns('product_codes', payload, ['unit_cost', 'suggested_price'])
@@ -637,13 +656,14 @@ function saveLocalSale(sale, reason) {
     id: `local-${Date.now()}`,
     created_at: now,
     storage: 'local',
-    storageLabel: 'Guardada localmente',
-    storageReason: reason
+    storageLabel: 'Pendiente de sincronizar',
+    storageReason: reason,
+    pendingSync: true
   }
 
   const currentSales = readLocalSales()
-  const nextSales = [...currentSales, localSale]
-  window.localStorage.setItem(LOCAL_SALES_KEY, JSON.stringify(nextSales))
+  const nextSales = [...currentSales.filter((sale) => sale.folio !== localSale.folio), localSale]
+  writeLocalSales(nextSales)
 
   return localSale
 }
@@ -653,6 +673,74 @@ function readLocalSales() {
     return JSON.parse(window.localStorage.getItem(LOCAL_SALES_KEY) || '[]')
   } catch {
     return []
+  }
+}
+
+function writeLocalSales(sales) {
+  window.localStorage.setItem(LOCAL_SALES_KEY, JSON.stringify(sales))
+}
+
+function normalizeLocalSaleForSync(sale) {
+  return {
+    ...sale,
+    cashierName: sale.cashierName || sale.cashier || sale.cashier_name,
+    customerName: sale.customerName || sale.customer_name || '',
+    customerWhatsapp: sale.customerWhatsapp || sale.customerPhone || sale.customer_whatsapp || '',
+    customerType: sale.customerType || sale.customer_type || '',
+    paymentMethod: sale.paymentMethod || sale.payment_method,
+    discountPercent: Number(sale.discountPercent ?? sale.discount_percent ?? 0),
+    discountAmount: Number(sale.discountAmount ?? sale.discount_amount ?? 0),
+    items: (sale.items || []).map((item) => ({
+      ...item,
+      unitPrice: Number(item.unitPrice ?? item.unit_price ?? 0)
+    }))
+  }
+}
+
+async function saveSaleToSupabase(sale) {
+  const salePayload = buildSalePayload(sale)
+  const saleResult = await insertSaleWithCompatibleColumns(salePayload)
+
+  if (saleResult.localFallback) {
+    throw new Error(saleResult.reason)
+  }
+
+  if (saleResult.error) {
+    throw new Error(friendlySupabaseMessage(saleResult.error) || 'No se pudo guardar en Supabase.')
+  }
+
+  const savedSale = saleResult.data
+  const saleItems = sale.items.map((item) => {
+    const subtotal = itemSubtotal(item)
+    return {
+      sale_id: savedSale.id,
+      category: item.category,
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unitPrice),
+      subtotal,
+      line_total: subtotal,
+      material: item.material || null,
+      code_detected: normalizeCode(item.code_detected) || null,
+      capture_origin: item.capture_origin || 'manual'
+    }
+  })
+
+  const { data: savedItems, error: itemsError } = await insertSaleItemsWithCompatibleColumns(saleItems)
+
+  if (itemsError) {
+    const detail = isMissingSchemaError(itemsError)
+      ? 'La tabla sale_items no existe o no esta expuesta en Supabase.'
+      : friendlySupabaseMessage(itemsError)
+    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${detail}`)
+  }
+
+  await relateSaleItemsToInventory(savedItems || [])
+
+  return {
+    id: savedSale.id,
+    created_at: savedSale.created_at,
+    storage: 'supabase',
+    storageLabel: 'Guardada en Supabase'
   }
 }
 

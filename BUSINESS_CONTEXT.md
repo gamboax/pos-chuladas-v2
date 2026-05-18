@@ -196,3 +196,36 @@ El sistema debe mantener:
 6. Código limpio y escalable.
 7. Evitar librerías innecesarias.
 8. Mantener build limpio.
+---
+
+# OPERACION REAL POST-EVENTO
+
+## Conectividad debil
+
+En eventos reales puede fallar internet o Supabase. La regla de negocio es: no perder ventas.
+Si el guardado remoto no esta disponible, la venta puede quedar local como pendiente y debe mostrarse a la cajera para reintentar sincronizacion.
+
+## Ciudad / evento
+
+Cambiar ciudad limpia la venta actual y separa las metricas. Si hay articulos en carrito, la app debe avisar antes de cambiar ciudad.
+Dashboards, resumen de caja, gastos, cortes y pendientes deben filtrar por ciudad/evento activo.
+
+## Gastos y cortes
+
+Manager/admin operativo captura solo gastos variables de evento:
+- Renta del lugar
+- Gasolina
+- Comida
+- Pago de colaborador
+- Casetas
+- Otros
+
+El corte debe mostrar diferencia clara:
+- Sobrante
+- Faltante
+- Exacto
+
+## Inventario
+
+Los codigos de producto deben ser unicos. Si un codigo ya existe, se debe mostrar error claro y no crear duplicado.
+Una venta con `code_detected` debe intentar enlazarse a product_codes/purchase_lot_items sin romper la venta si no encuentra codigo.
