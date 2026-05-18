@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  cancelSale,
   fetchInventoryData,
   fetchTodayAdminData,
+  getPendingLocalSales,
+  markTicketSent,
   saveCashCut,
   saveExpense,
   savePurchaseLot,
@@ -24,8 +27,12 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [summary, setSummary] = useState({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
   const [inventory, setInventory] = useState({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
   const [eventCity, setEventCity] = useState(defaultCity)
+  const [eventDate, setEventDate] = useState(todayInputValue())
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [ticketSearch, setTicketSearch] = useState('')
+  const [pendingLocalSales, setPendingLocalSales] = useState([])
+  const [cancelTarget, setCancelTarget] = useState(null)
+  const [cancelReason, setCancelReason] = useState('')
   const [expenseForm, setExpenseForm] = useState({ category: EXPENSE_CATEGORIES[0], description: '', amount: '' })
   const [cashCounted, setCashCounted] = useState('')
   const [cashCutNotes, setCashCutNotes] = useState('')
@@ -37,23 +44,25 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [savingCashCut, setSavingCashCut] = useState(false)
   const [savingLot, setSavingLot] = useState(false)
   const [savingLotItem, setSavingLotItem] = useState(false)
+  const [savingCancellation, setSavingCancellation] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
   const effectiveCity = eventCity.trim()
 
-  async function loadDashboard(city = effectiveCity) {
+  async function loadDashboard(city = effectiveCity, date = eventDate) {
     setLoading(true)
     setError('')
 
     try {
       const shouldLoadInventory = isSuperAdmin || isInvestor
       const [adminResult, inventoryResult] = await Promise.all([
-        fetchTodayAdminData({ city }),
+        fetchTodayAdminData({ city, date }),
         shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
       ])
       setSummary(adminResult)
       setInventory(inventoryResult)
+      setPendingLocalSales(filterPendingByDate(getPendingLocalSales({ city }), date))
     } catch (loadError) {
       setError(loadError.message || 'No se pudo cargar el dashboard.')
     } finally {
@@ -69,12 +78,13 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       try {
         const shouldLoadInventory = isSuperAdmin || isInvestor
         const [adminResult, inventoryResult] = await Promise.all([
-          fetchTodayAdminData({ city: eventCity.trim() }),
+          fetchTodayAdminData({ city: eventCity.trim(), date: eventDate }),
           shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
         ])
         if (alive) {
           setSummary(adminResult)
           setInventory(inventoryResult)
+          setPendingLocalSales(filterPendingByDate(getPendingLocalSales({ city: eventCity.trim() }), eventDate))
         }
       } catch (loadError) {
         if (alive) setError(loadError.message || 'No se pudo cargar el dashboard.')
@@ -87,17 +97,81 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       alive = false
       window.clearTimeout(timeout)
     }
-  }, [eventCity, isSuperAdmin, isInvestor])
+  }, [eventCity, eventDate, isSuperAdmin, isInvestor])
 
 
-  const metrics = useMemo(() => buildMetrics(summary.sales, summary.expenses, summary.cashCuts), [summary.sales, summary.expenses, summary.cashCuts])
+  const activeSales = useMemo(() => summary.sales.filter((sale) => !isCancelledSale(sale)), [summary.sales])
+  const cancelledSales = useMemo(() => summary.sales.filter(isCancelledSale), [summary.sales])
+  const criticalChanges = useMemo(() => buildCriticalChanges(cancelledSales), [cancelledSales])
+  const metrics = useMemo(() => buildMetrics(activeSales, summary.expenses, summary.cashCuts), [activeSales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
-  const operationalAnalytics = useMemo(() => buildOperationalAnalytics(summary.sales, summary.expenses, inventory), [summary.sales, summary.expenses, inventory])
-  const visibleTickets = useMemo(() => filterTickets(summary.sales, ticketSearch), [summary.sales, ticketSearch])
+  const operationalAnalytics = useMemo(() => buildOperationalAnalytics(activeSales, summary.expenses, inventory), [activeSales, summary.expenses, inventory])
+  const visibleTickets = useMemo(() => filterTickets(activeSales, ticketSearch), [activeSales, ticketSearch])
   const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
   const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
   const cityLabel = effectiveCity || 'Todas las ciudades'
   const eventLabel = effectiveCity ? `Evento activo: ${effectiveCity}` : 'Vista general del dia'
+
+  async function handleCancelSale() {
+    if (!isSuperAdmin || !cancelTarget || savingCancellation) return
+
+    if (!cancelReason.trim()) {
+      setError('Escribe un motivo para anular la venta.')
+      return
+    }
+
+    setSavingCancellation(true)
+    setError('')
+    setNotice('')
+
+    try {
+      await cancelSale(cancelTarget.id, cancelReason)
+      setNotice(`Venta ${cancelTarget.folio || ''} anulada.`)
+      setCancelTarget(null)
+      setCancelReason('')
+      await loadDashboard()
+    } catch (cancelError) {
+      setError(cancelError.message || 'No se pudo anular la venta.')
+    } finally {
+      setSavingCancellation(false)
+    }
+  }
+
+  function handleExport(kind) {
+    const fileDate = eventDate || todayInputValue()
+    const cityPart = effectiveCity || 'general'
+
+    if (kind === 'sales') {
+      downloadCsv(`ventas-${cityPart}-${fileDate}.csv`, buildSalesCsvRows(summary.sales))
+      return
+    }
+
+    if (kind === 'expenses') {
+      downloadCsv(`gastos-${cityPart}-${fileDate}.csv`, buildExpenseCsvRows(summary.expenses))
+      return
+    }
+
+    downloadCsv(`corte-${cityPart}-${fileDate}.csv`, buildCashCutCsvRows(summary.cashCuts))
+  }
+
+  async function handleCopyTicket(sale) {
+    const text = buildDashboardTicket(sale)
+    await navigator.clipboard?.writeText(text)
+    setNotice('Ticket copiado.')
+  }
+
+  async function handleResendWhatsApp(sale) {
+    window.open(buildDashboardWhatsAppUrl(sale), '_blank', 'noopener,noreferrer')
+    if (!isInvestor) {
+      try {
+        await markTicketSent(sale.id)
+        setNotice('Ticket marcado como enviado.')
+        await loadDashboard()
+      } catch (markError) {
+        setNotice(markError.message || 'WhatsApp abierto; no se pudo marcar como enviado.')
+      }
+    }
+  }
 
   async function handleSaveExpense() {
     if (!canManageOps || savingExpense) return
@@ -263,6 +337,10 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               Ciudad / evento
               <input value={eventCity} onChange={(event) => setEventCity(event.target.value)} placeholder="Ej. Matehuala" style={styles.input} />
             </label>
+            <label style={styles.labelBlock}>
+              Fecha
+              <input value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" style={styles.input} />
+            </label>
 
             <section style={styles.cleanSection}>
               <div style={styles.sectionHead}>
@@ -393,8 +471,78 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               ) : (
                 visibleTickets.slice(0, 8).map((sale) => <TicketRow key={sale.id} sale={sale} onSelect={setSelectedTicket} />)
               )}
-              {selectedTicket && <TicketDetail sale={selectedTicket} inventory={inventory} onClose={() => setSelectedTicket(null)} />}
+              {selectedTicket && (
+                <TicketDetail
+                  sale={selectedTicket}
+                  inventory={inventory}
+                  isInvestor={isInvestor}
+                  onCopy={handleCopyTicket}
+                  onResendWhatsApp={handleResendWhatsApp}
+                  onClose={() => setSelectedTicket(null)}
+                />
+              )}
             </section>
+
+            {isSuperAdmin && (
+              <section style={styles.cleanSection}>
+                <div style={styles.sectionHead}>
+                  <h2 style={styles.sectionTitle}>Auditoria</h2>
+                  <span style={styles.chip}>{eventDate}</span>
+                </div>
+
+                <div style={styles.exportGrid}>
+                  <button type="button" style={styles.smallActionButton} onClick={() => handleExport('sales')}>CSV ventas</button>
+                  <button type="button" style={styles.smallActionButton} onClick={() => handleExport('expenses')}>CSV gastos</button>
+                  <button type="button" style={styles.smallActionButton} onClick={() => handleExport('cashCuts')}>CSV corte</button>
+                </div>
+
+                <div style={styles.grid}>
+                  <Metric label="Sincronizadas" value={summary.sales.length} />
+                  <Metric label="Pendientes" value={pendingLocalSales.length} />
+                  <Metric label="Canceladas" value={cancelledSales.length} />
+                  <Metric label="Cambios criticos" value={criticalChanges.length} />
+                </div>
+
+                <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Ventas recientes</h3><span style={styles.chip}>{summary.sales.length}</span></div>
+                  {summary.sales.length === 0 ? <div style={styles.empty}>Sin ventas para auditar.</div> : summary.sales.slice(0, 8).map((sale) => (
+                    <AuditSaleCard key={sale.id || sale.folio} sale={sale} onSelect={setSelectedTicket} onCancel={setCancelTarget} />
+                  ))}
+                </div>
+
+                {cancelTarget && (
+                  <div style={styles.cancelBox}>
+                    <strong>Anular {cancelTarget.folio || 'venta'}</strong>
+                    <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Motivo de anulacion" style={styles.textarea} />
+                    <div style={styles.twoColumns}>
+                      <button type="button" style={styles.secondaryButton} onClick={() => { setCancelTarget(null); setCancelReason('') }}>Cancelar</button>
+                      <button type="button" disabled={savingCancellation} style={styles.dangerButton} onClick={handleCancelSale}>{savingCancellation ? 'Anulando...' : 'Anular venta'}</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Pendientes locales</h3><span style={styles.chip}>{pendingLocalSales.length}</span></div>
+                  {pendingLocalSales.length === 0 ? <div style={styles.empty}>Sin ventas pendientes locales.</div> : pendingLocalSales.slice(0, 6).map((sale) => (
+                    <AuditInfoCard key={sale.id || sale.folio} title={sale.folio || 'Pendiente'} meta={sale.city || cityLabel} value={money(sale.total)} status="Pendiente de sincronizar" />
+                  ))}
+                </div>
+
+                <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Gastos y cortes</h3><span style={styles.chip}>{summary.expenses.length + summary.cashCuts.length}</span></div>
+                  {summary.expenses.slice(0, 4).map((expense) => <AuditInfoCard key={expense.id} title={expense.category} meta={expense.description || expense.city} value={money(expense.amount)} status="Gasto" />)}
+                  {summary.cashCuts.slice(0, 3).map((cut) => <AuditInfoCard key={cut.id} title="Corte de caja" meta={cut.city || cityLabel} value={money(cut.difference)} status={cashCutStatus(cut.difference)} />)}
+                  {!summary.expenses.length && !summary.cashCuts.length && <div style={styles.empty}>Sin gastos ni cortes para auditar.</div>}
+                </div>
+
+                <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Cambios criticos</h3><span style={styles.chip}>{criticalChanges.length}</span></div>
+                  {criticalChanges.length === 0 ? <div style={styles.empty}>Sin cambios criticos registrados.</div> : criticalChanges.map((change) => (
+                    <AuditInfoCard key={change.id} title={change.title} meta={change.meta} value={change.value} status={change.status} />
+                  ))}
+                </div>
+              </section>
+            )}
             {canManageOps && !isSuperAdmin && (
               <>
                 <section style={styles.cleanSection}>
@@ -570,6 +718,48 @@ function CategoryRow({ category, max }) {
   )
 }
 
+function AuditSaleCard({ sale, onSelect, onCancel }) {
+  const cancelled = isCancelledSale(sale)
+
+  return (
+    <article style={styles.auditCard}>
+      <button type="button" style={styles.auditMain} onClick={() => onSelect?.(sale)}>
+        <span style={styles.ticketInfo}>
+          <strong>{sale.folio || 'Sin folio'}</strong>
+          <small>{sale.city || 'Sin ciudad'} / {sale.payment_method || 'Pago'} / {ticketTimeLabel(sale)}</small>
+        </span>
+        <span style={styles.ticketRight}>
+          <strong>{money(sale.total)}</strong>
+          <small>{cancelled ? 'Cancelada' : 'Sincronizada'}</small>
+        </span>
+      </button>
+      {!cancelled && (
+        <button type="button" style={styles.auditCancelButton} onClick={() => onCancel?.(sale)}>
+          Anular
+        </button>
+      )}
+      {cancelled && <div style={styles.auditReason}>{cancellationReasonOf(sale) || 'Venta anulada'}</div>}
+    </article>
+  )
+}
+
+function AuditInfoCard({ title, meta, value, status }) {
+  return (
+    <article style={styles.auditCard}>
+      <div style={styles.auditMainStatic}>
+        <span style={styles.ticketInfo}>
+          <strong>{title}</strong>
+          <small>{meta || 'Sin detalle'}</small>
+        </span>
+        <span style={styles.ticketRight}>
+          <strong>{value}</strong>
+          <small>{status}</small>
+        </span>
+      </div>
+    </article>
+  )
+}
+
 function TicketRow({ sale, onSelect }) {
   const time = sale.created_at ? new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : ''
   return (
@@ -586,14 +776,16 @@ function TicketRow({ sale, onSelect }) {
   )
 }
 
-function TicketDetail({ sale, inventory, onClose }) {
+function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, onClose }) {
   const detail = buildTicketAnalytics(sale, inventory)
   const timestamp = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
+  const cancelled = isCancelledSale(sale)
 
   return (
     <section style={styles.detailBox}>
       <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Detalle ticket</h2><button type="button" style={styles.linkButton} onClick={onClose}>Cerrar</button></div>
       <DataRow label="Folio" value={sale.folio || 'Sin folio'} />
+      <DataRow label="Estado" value={cancelled ? 'Cancelada' : 'Activa'} />
       <DataRow label="Total" value={money(sale.total)} strong />
       <DataRow label="Pago" value={sale.payment_method || 'Sin metodo'} />
       <DataRow label="Ciudad/evento" value={sale.city || 'Sin ciudad'} />
@@ -603,8 +795,143 @@ function TicketDetail({ sale, inventory, onClose }) {
       <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
       <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
       <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
+      {sale.ticket_sent_at && <DataRow label="Ticket enviado" value={new Date(sale.ticket_sent_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })} />}
+      {cancelled && <DataRow label="Motivo anulacion" value={cancellationReasonOf(sale) || 'Sin motivo'} strong />}
+      <div style={styles.exportGrid}>
+        <button type="button" style={styles.smallActionButton} onClick={() => onCopy?.(sale)}>Copiar ticket</button>
+        {!isInvestor && <button type="button" style={styles.smallActionButton} onClick={() => onResendWhatsApp?.(sale)}>Reenviar WhatsApp</button>}
+      </div>
     </section>
   )
+}
+
+function buildCriticalChanges(cancelledSales) {
+  return cancelledSales.map((sale) => ({
+    id: sale.id || sale.folio,
+    title: `Venta anulada ${sale.folio || ''}`,
+    meta: cancellationReasonOf(sale) || sale.city || 'Sin motivo',
+    value: money(sale.total),
+    status: ticketTimeLabel(sale)
+  }))
+}
+
+function isCancelledSale(sale) {
+  const status = String(sale.status || '').trim().toLowerCase()
+  return ['cancelled', 'canceled', 'cancelada', 'cancelado', 'anulada', 'anulado', 'void'].includes(status)
+}
+
+function cancellationReasonOf(sale) {
+  return sale.cancellation_reason || sale.cancel_reason || sale.canceled_reason || sale.audit_notes || ''
+}
+
+function filterPendingByDate(sales, date) {
+  if (!date) return sales
+  return sales.filter((sale) => new Date(sale.created_at).toISOString().slice(0, 10) === date)
+}
+
+function ticketTimeLabel(sale) {
+  return sale.created_at ? new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : 'Sin hora'
+}
+
+function buildDashboardTicket(sale) {
+  const items = saleItemsOf(sale)
+  const date = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
+  const itemLines = items.length
+    ? items.map((item) => `${item.quantity} x ${[item.category, item.material, item.code_detected].filter(Boolean).join(' / ')} @ ${money(item.unit_price ?? item.unitPrice)} = ${money(itemLineTotal(item))}`).join('\n')
+    : 'Sin detalle de articulos'
+
+  return `JOYERIA CHULADAS MAYOREO
+
+Folio: ${sale.folio || 'Sin folio'}
+Ciudad: ${sale.city || 'Sin ciudad'}
+Fecha: ${date}
+Cajero: ${sale.cashier_name || 'Sin cajera'}
+
+ARTICULOS
+${itemLines}
+
+Subtotal: ${money(sale.subtotal)}
+Descuento: -${money(sale.discount_amount)}
+TOTAL: ${money(sale.total)}
+Pago: ${sale.payment_method || 'Sin metodo'}
+${sale.customer_name ? `Cliente: ${sale.customer_name}\n` : ''}${sale.customer_whatsapp ? `WhatsApp: ${sale.customer_whatsapp}\n` : ''}
+Gracias por tu compra.`
+}
+
+function buildDashboardWhatsAppUrl(sale) {
+  const digits = String(sale.customer_whatsapp || '').replace(/\D/g, '')
+  const phone = digits.length === 10 ? `52${digits}` : digits
+  const text = encodeURIComponent(buildDashboardTicket(sale))
+  return phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`
+}
+
+function downloadCsv(filename, rows) {
+  const csv = rowsToCsv(rows)
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+function rowsToCsv(rows) {
+  if (!rows.length) return ''
+  const headers = Object.keys(rows[0])
+  return [
+    headers.join(','),
+    ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(','))
+  ].join('\n')
+}
+
+function csvCell(value) {
+  const text = String(value ?? '')
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function buildSalesCsvRows(sales) {
+  return sales.map((sale) => ({
+    folio: sale.folio || '',
+    city: sale.city || '',
+    status: sale.status || 'completed',
+    created_at: sale.created_at || '',
+    total: sale.total || 0,
+    payment_method: sale.payment_method || '',
+    customer_name: sale.customer_name || '',
+    cashier_name: sale.cashier_name || '',
+    categories: [...new Set(saleItemsOf(sale).map((item) => item.category).filter(Boolean))].join(' / '),
+    cancellation_reason: cancellationReasonOf(sale)
+  }))
+}
+
+function buildExpenseCsvRows(expenses) {
+  return expenses.map((expense) => ({
+    city: expense.city || '',
+    category: expense.category || '',
+    description: expense.description || '',
+    amount: expense.amount || 0,
+    payment_method: expense.payment_method || '',
+    created_at: expense.created_at || ''
+  }))
+}
+
+function buildCashCutCsvRows(cuts) {
+  return cuts.map((cut) => ({
+    city: cut.city || '',
+    cashier_name: cut.cashier_name || '',
+    total_sales: cut.total_sales || 0,
+    expected_cash: cut.expected_cash || 0,
+    cash_counted: cut.cash_counted || 0,
+    transfer_total: cut.transfer_total || 0,
+    card_total: cut.card_total || 0,
+    cash_expenses: cut.cash_expenses || 0,
+    difference: cut.difference || 0,
+    notes: cut.notes || '',
+    created_at: cut.created_at || ''
+  }))
 }
 
 function buildOperationalAnalytics(sales, expenses, inventory) {
@@ -1008,9 +1335,19 @@ const styles = {
   cleanSection: { display: 'grid', gap: 11, padding: '2px 0 4px' },
   sectionHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   sectionTitle: { margin: 0, fontSize: 18, fontWeight: 720 },
+  auditTitle: { margin: 0, fontSize: 15, fontWeight: 760 },
   chip: { border: '1px solid #d7d7d7', borderRadius: 999, padding: '6px 10px', background: '#f7f7f7', color: '#555555', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' },
   grid: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10, minWidth: 0 },
   metricCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 13, display: 'grid', gap: 5, boxShadow: '0 7px 16px rgba(17, 17, 17, 0.035)', minWidth: 0, overflow: 'hidden' },
+  exportGrid: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, minWidth: 0 },
+  smallActionButton: { width: '100%', minHeight: 44, border: '1px solid #111111', borderRadius: 16, background: '#ffffff', color: '#111111', fontSize: 13, fontWeight: 740, boxSizing: 'border-box' },
+  auditGroup: { display: 'grid', gap: 8, minWidth: 0, maxWidth: '100%' },
+  auditCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 11, display: 'grid', gap: 8, minWidth: 0, boxSizing: 'border-box' },
+  auditMain: { width: '100%', border: 'none', background: 'transparent', padding: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 10, minWidth: 0, textAlign: 'left' },
+  auditMainStatic: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 10, minWidth: 0 },
+  auditCancelButton: { width: '100%', minHeight: 42, border: '1px solid #b91c1c', borderRadius: 16, background: '#fff5f5', color: '#b91c1c', fontSize: 13, fontWeight: 760 },
+  auditReason: { border: '1px solid #fed7aa', borderRadius: 15, background: '#fff7ed', color: '#9a3412', padding: 9, fontSize: 13, fontWeight: 650, overflowWrap: 'anywhere' },
+  cancelBox: { border: '1px solid #b91c1c', borderRadius: 20, background: '#fffafa', padding: 13, display: 'grid', gap: 10, minWidth: 0, boxSizing: 'border-box' },
   insightStack: { display: 'grid', gap: 8, minWidth: 0, maxWidth: '100%' },
   insightPill: { border: '1px solid #0EA371', borderRadius: 18, background: '#DFF8EC', color: '#064E3B', padding: '11px 12px', fontSize: 14, fontWeight: 720, lineHeight: 1.25, boxSizing: 'border-box', maxWidth: '100%', overflowWrap: 'anywhere' },
   miniBars: { display: 'grid', gap: 9, minWidth: 0, maxWidth: '100%' },
@@ -1034,6 +1371,7 @@ const styles = {
   twoColumns: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 9, minWidth: 0 },
   threeColumns: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)', gap: 8, minWidth: 0 },
   primaryButton: { width: '100%', maxWidth: '100%', boxSizing: 'border-box', minHeight: 58, border: '1px solid #0EA371', borderRadius: 20, background: '#10B981', color: '#ffffff', fontSize: 16, fontWeight: 720, boxShadow: '0 12px 22px rgba(16, 185, 129, 0.18)', transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' },
+  dangerButton: { width: '100%', maxWidth: '100%', boxSizing: 'border-box', minHeight: 56, border: '1px solid #b91c1c', borderRadius: 20, background: '#b91c1c', color: '#ffffff', fontSize: 16, fontWeight: 720, transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' },
   secondaryButton: { width: '100%', maxWidth: '100%', boxSizing: 'border-box', minHeight: 56, border: '1px solid #111111', borderRadius: 20, background: '#ffffff', color: '#111111', fontSize: 16, fontWeight: 720, transition: 'transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease' }
 }
 

@@ -4,6 +4,7 @@ const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
 const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount']
 const OPTIONAL_SALE_ITEM_COLUMNS = ['line_total']
+const OPTIONAL_SALE_SELECT_COLUMNS = ['status', 'cancellation_reason', 'cancel_reason', 'canceled_reason', 'audit_notes', 'ticket_sent_at']
 const OPTIONAL_PURCHASE_LOT_COLUMNS = ['name', 'purchase_place', 'purchase_date', 'total_investment', 'notes', 'total_cost']
 const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['product_code_id', 'code', 'quantity_purchased', 'quantity', 'suggested_price', 'total_cost']
 
@@ -108,10 +109,11 @@ export async function retryPendingLocalSales(filters = {}) {
 }
 export async function fetchTodayAdminData(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
+  const dateFilter = typeof filters === 'object' ? filters.date : ''
 
   if (!hasSupabaseConfig || !supabase) {
     const localSales = readLocalSales()
-      .filter(isTodaySale)
+      .filter((sale) => isSaleInDate(sale, dateFilter))
       .filter((sale) => matchesCity(sale, cityFilter))
 
     return {
@@ -123,16 +125,9 @@ export async function fetchTodayAdminData(filters = {}) {
     }
   }
 
-  const start = startOfToday()
+  const start = startOfDay(dateFilter)
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
-
-  let salesQuery = supabase
-    .from('sales')
-    .select('id, folio, city, cashier_name, subtotal, discount_amount, total, payment_method, customer_name, customer_whatsapp, customer_type, created_at')
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString())
-    .order('created_at', { ascending: false })
 
   let expensesQuery = supabase
     .from('expenses')
@@ -151,12 +146,15 @@ export async function fetchTodayAdminData(filters = {}) {
 
   if (cityFilter?.trim()) {
     const city = cityFilter.trim()
-    salesQuery = salesQuery.ilike('city', city)
     expensesQuery = expensesQuery.ilike('city', city)
     cashCutsQuery = cashCutsQuery.ilike('city', city)
   }
 
-  const [salesResult, expensesResult, cashCutsResult] = await Promise.all([salesQuery, expensesQuery, cashCutsQuery])
+  const [salesResult, expensesResult, cashCutsResult] = await Promise.all([
+    fetchSalesRows({ start, end, cityFilter }),
+    expensesQuery,
+    cashCutsQuery
+  ])
 
   if (salesResult.error) {
     logSupabaseError('[Supabase fetchTodayAdminData] sales select failed:', salesResult.error)
@@ -164,7 +162,7 @@ export async function fetchTodayAdminData(filters = {}) {
       return {
         storage: 'local',
         reason: offlineReason(),
-        sales: readLocalSales().filter(isTodaySale).filter((sale) => matchesCity(sale, cityFilter)),
+        sales: readLocalSales().filter((sale) => isSaleInDate(sale, dateFilter)).filter((sale) => matchesCity(sale, cityFilter)),
         expenses: [],
         cashCuts: []
       }
@@ -174,7 +172,7 @@ export async function fetchTodayAdminData(filters = {}) {
       return {
         storage: 'local',
         reason: 'La tabla sales no existe o no esta expuesta en Supabase.',
-        sales: readLocalSales().filter(isTodaySale).filter((sale) => matchesCity(sale, cityFilter)),
+        sales: readLocalSales().filter((sale) => isSaleInDate(sale, dateFilter)).filter((sale) => matchesCity(sale, cityFilter)),
         expenses: [],
         cashCuts: []
       }
@@ -212,6 +210,48 @@ export async function fetchTodayAdminData(filters = {}) {
     expenses: expensesResult.error ? [] : expensesResult.data || [],
     cashCuts: cashCutsResult.error ? [] : cashCutsResult.data || []
   }
+}
+
+export async function cancelSale(saleId, reason) {
+  requireSupabase('anular ventas')
+
+  if (!reason?.trim()) {
+    throw new Error('Escribe un motivo para anular la venta.')
+  }
+
+  const payload = {
+    status: 'cancelled',
+    cancellation_reason: reason.trim(),
+    cancel_reason: reason.trim(),
+    canceled_reason: reason.trim(),
+    audit_notes: reason.trim(),
+    updated_at: new Date().toISOString()
+  }
+  const result = await updateSaleWithCompatibleColumns(saleId, payload, ['cancellation_reason', 'cancel_reason', 'canceled_reason', 'audit_notes', 'updated_at'])
+
+  if (result.error) {
+    if (mentionsColumn(result.error, 'status')) {
+      throw new Error('Para anular ventas falta la columna status en sales. ALTER sugerido: add column status text default completed.')
+    }
+    throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo anular la venta.')
+  }
+
+  return result.data
+}
+
+export async function markTicketSent(saleId) {
+  requireSupabase('marcar ticket enviado')
+
+  const result = await updateSaleWithCompatibleColumns(saleId, { ticket_sent_at: new Date().toISOString() }, [])
+
+  if (result.error) {
+    if (mentionsColumn(result.error, 'ticket_sent_at')) {
+      throw new Error('Para marcar tickets enviados falta la columna ticket_sent_at en sales.')
+    }
+    throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo marcar el ticket.')
+  }
+
+  return result.data
 }
 export async function fetchInventoryData() {
   if (!hasSupabaseConfig || !supabase) {
@@ -479,6 +519,37 @@ async function insertSaleWithCompatibleColumns(payload) {
   }
 }
 
+async function fetchSalesRows({ start, end, cityFilter }) {
+  const baseColumns = ['id', 'folio', 'city', 'cashier_name', 'subtotal', 'discount_amount', 'total', 'payment_method', 'customer_name', 'customer_whatsapp', 'customer_type', 'created_at']
+  let optionalColumns = [...OPTIONAL_SALE_SELECT_COLUMNS]
+
+  while (true) {
+    let query = supabase
+      .from('sales')
+      .select([...baseColumns, ...optionalColumns].join(', '))
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .order('created_at', { ascending: false })
+
+    if (cityFilter?.trim()) {
+      query = query.ilike('city', cityFilter.trim())
+    }
+
+    const { data, error } = await query
+
+    if (!error) return { data, error: null }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+
+    if (missingColumn) {
+      optionalColumns = optionalColumns.filter((column) => column !== missingColumn)
+      continue
+    }
+
+    return { data: null, error }
+  }
+}
+
 async function insertSaleItemsWithCompatibleColumns(items) {
   let nextItems = items.map((item) => ({ ...item }))
 
@@ -511,6 +582,33 @@ async function insertSaleItemsWithCompatibleColumns(items) {
     data: null,
     error: new Error('No se pudo adaptar el guardado a las columnas disponibles en sale_items.')
   }
+}
+
+async function updateSaleWithCompatibleColumns(saleId, payload, optionalColumns) {
+  let nextPayload = { ...payload }
+
+  for (let attempt = 0; attempt <= optionalColumns.length; attempt += 1) {
+    const { data, error } = await supabase
+      .from('sales')
+      .update(nextPayload)
+      .eq('id', saleId)
+      .select('*')
+      .single()
+
+    if (!error) return { data, error: null }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+
+    if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
+      nextPayload = { ...nextPayload }
+      delete nextPayload[missingColumn]
+      continue
+    }
+
+    return { data: null, error }
+  }
+
+  return { data: null, error: new Error('No se pudo adaptar la actualizacion a las columnas disponibles en sales.') }
 }
 
 async function fetchSaleItemsForSales(saleIds) {
@@ -800,17 +898,17 @@ function matchesCity(row, city) {
   return String(row.city || '').trim().toLowerCase() === city.trim().toLowerCase()
 }
 
-function isTodaySale(sale) {
+function isSaleInDate(sale, dateFilter) {
   const createdAt = new Date(sale.created_at)
-  const start = startOfToday()
+  const start = startOfDay(dateFilter)
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
 
   return createdAt >= start && createdAt < end
 }
 
-function startOfToday() {
-  const date = new Date()
+function startOfDay(dateFilter) {
+  const date = dateFilter ? new Date(`${dateFilter}T00:00:00`) : new Date()
   date.setHours(0, 0, 0, 0)
   return date
 }
