@@ -328,6 +328,8 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
     setDetectedCodes([])
     setShowManualFallback(false)
     setCodeInput('')
+    clearCapturedImage()
+    stopCamera()
   }
 
   async function scanMore() {
@@ -335,7 +337,8 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
     setDetectedCodes([])
     setShowManualFallback(false)
     setAssistError('')
-    await repeatCapture()
+    setCameraError('')
+    await startCamera()
   }
 
   function goBack() {

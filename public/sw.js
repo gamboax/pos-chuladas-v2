@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pos-chuladas-v2-shell-v3'
+const CACHE_NAME = 'pos-chuladas-v2-shell-v4'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/pwa-icon.svg', '/favicon.svg']
 
 self.addEventListener('install', (event) => {
