@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createAiLabelImage, createOcrImageVariants, recognizeCodesFromImage } from '../../lib/ocr'
-import { extractProductCodesFromText, lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
+import { createAiLabelImage } from '../../lib/ocr'
+import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
 
@@ -10,7 +10,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   const streamRef = useRef(null)
   const inputRef = useRef(null)
   const activeSubmitRef = useRef('')
-  const ocrRunRef = useRef(0)
+  const captureRunRef = useRef(0)
   const aiAbortRef = useRef(null)
   const capturedImageUrlRef = useRef('')
   const [cameraActive, setCameraActive] = useState(false)
@@ -18,14 +18,12 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   const [cameraError, setCameraError] = useState('')
   const [capturedImage, setCapturedImage] = useState('')
   const [codeInput, setCodeInput] = useState('')
-  const [assistMessage, setAssistMessage] = useState('Toma foto y escribe codigo si hace falta. Ej. A2 o A2-30.')
+  const [assistMessage, setAssistMessage] = useState('Toma foto y analiza con IA para sugerir productos.')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
-  const [isOcrReading, setIsOcrReading] = useState(false)
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false)
-  const [showBasicRead, setShowBasicRead] = useState(false)
-  const [ocrDetectedCodes, setOcrDetectedCodes] = useState([])
-  const [ocrText, setOcrText] = useState('')
+  const [showManualFallback, setShowManualFallback] = useState(false)
+  const [detectedCodes, setDetectedCodes] = useState([])
   const [codeHistory, setCodeHistory] = useState([])
   const canConfirm = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
   const livePreview = useMemo(() => (codeInput.trim() ? parseProductCode(codeInput) : null), [codeInput])
@@ -33,7 +31,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
   useEffect(() => {
     return () => {
-      ocrRunRef.current += 1
+      captureRunRef.current += 1
       cancelAiAnalysis()
       stopCamera(false)
       revokeCapturedImage()
@@ -106,67 +104,6 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     return () => window.clearTimeout(timeout)
   }, [canInterpret, codeInput, livePreview, submitCode])
 
-  async function runOcr(imageVariants, runId) {
-    setIsOcrReading(true)
-    setOcrDetectedCodes([])
-    setOcrText('')
-    setShowBasicRead(false)
-    setCameraMessage('Intentando lectura basica...')
-    setAssistMessage('Intentando lectura basica. Puedes escribir el codigo si tienes prisa.')
-
-    try {
-      const texts = []
-      const detectedByCode = new Map()
-
-      for (const variant of imageVariants) {
-        if (ocrRunRef.current !== runId) return
-        setCameraMessage('Intentando lectura basica...')
-        const text = await recognizeCodesFromImage(variant.image, { psm: variant.psm })
-        if (ocrRunRef.current !== runId) return
-        texts.push(text)
-
-        extractProductCodesFromText(text, { fuzzy: true }).forEach((parsed) => {
-          const current = detectedByCode.get(parsed.code)
-          if (!current || (!current.parsedPrice && parsed.parsedPrice)) {
-            detectedByCode.set(parsed.code, parsed)
-          }
-        })
-      }
-
-      const detected = [...detectedByCode.values()]
-      const combinedText = texts.filter(Boolean).join(' / ')
-      setOcrText(combinedText)
-      setOcrDetectedCodes(detected)
-
-      if (!detected.length) {
-        setAssistMessage('No pude leer la foto. Intenta otra captura o captura manual.')
-        setCameraMessage('Sin sugerencias claras. Captura manual disponible.')
-        return
-      }
-
-      const seen = new Set()
-      for (const parsed of detected) {
-        const key = parsed.code
-        if (seen.has(key)) continue
-        seen.add(key)
-        await addDetectedCode(parsed, { silent: true })
-      }
-
-      setAssistMessage(`${detected.length} posible(s) codigo(s). Revisa precios antes de confirmar.`)
-      setCameraMessage('Sugerencias detectadas. Listo para revisar.')
-      vibrateLight()
-    } catch {
-      if (ocrRunRef.current !== runId) return
-      setAssistMessage('No pude leer la foto. Intenta otra captura o captura manual.')
-      setCameraMessage('Captura manual disponible.')
-    } finally {
-      if (ocrRunRef.current === runId) {
-        setIsOcrReading(false)
-        window.setTimeout(() => inputRef.current?.focus(), 60)
-      }
-    }
-  }
-
   async function analyzeWithAi() {
     const canvas = canvasRef.current
     if (!canvas || !capturedImage || isAiAnalyzing) return
@@ -176,7 +113,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     const timeout = window.setTimeout(() => controller.abort(), 18000)
     aiAbortRef.current = controller
     setIsAiAnalyzing(true)
-    setShowBasicRead(false)
+    setShowManualFallback(false)
     setAssistError('')
     setCameraMessage('Analizando con IA...')
     setAssistMessage('Leyendo etiquetas...')
@@ -196,11 +133,10 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       }
 
       const suggested = normalizeAiItems(payload.items || [])
-      setOcrDetectedCodes(suggested)
-      setOcrText(payload.message || '')
+      setDetectedCodes(suggested)
 
       if (!suggested.length) {
-        setShowBasicRead(true)
+        setShowManualFallback(true)
         setAssistMessage(payload.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
         setCameraMessage('Sin sugerencias claras. Captura manual disponible.')
         return
@@ -215,13 +151,14 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
       setAssistMessage(`${suggested.length} sugerencia(s) detectada(s). Revisa antes de confirmar.`)
       setCameraMessage('Sugerencias detectadas. Revisa precios.')
+      setShowManualFallback(false)
       vibrateLight()
     } catch (error) {
       if (error?.name === 'AbortError') {
         setAssistMessage('Analisis cancelado. Puedes reintentar o corregir manualmente.')
         setCameraMessage('Analisis cancelado.')
       } else {
-        setShowBasicRead(true)
+        setShowManualFallback(true)
         setAssistMessage(error.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
         setCameraMessage('No pude leer la foto. Captura manual disponible.')
       }
@@ -235,12 +172,11 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
   async function startCamera() {
     if (streamRef.current) {
-      ocrRunRef.current += 1
+      captureRunRef.current += 1
       cancelAiAnalysis()
       clearCapturedImage()
-      setOcrDetectedCodes([])
-      setOcrText('')
-      setShowBasicRead(false)
+      setDetectedCodes([])
+      setShowManualFallback(false)
       await attachVideoStream()
       setCameraActive(true)
       setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
@@ -249,9 +185,8 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
     setCameraError('')
     clearCapturedImage()
-    setOcrDetectedCodes([])
-    setOcrText('')
-    setShowBasicRead(false)
+    setDetectedCodes([])
+    setShowManualFallback(false)
     setCameraMessage('Solicitando permiso de camara...')
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -290,14 +225,12 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   }
 
   async function repeatCapture() {
-    ocrRunRef.current += 1
+    captureRunRef.current += 1
     cancelAiAnalysis()
     clearCapturedImage()
     setCameraError('')
-    setIsOcrReading(false)
-    setOcrDetectedCodes([])
-    setOcrText('')
-    setShowBasicRead(false)
+    setDetectedCodes([])
+    setShowManualFallback(false)
     setCameraMessage(streamRef.current ? 'Camara activa. Toma otra captura.' : 'Activa la camara para repetir captura.')
 
     if (streamRef.current) {
@@ -346,30 +279,20 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     canvas.height = height
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, width, height)
-    const runId = ocrRunRef.current + 1
-    ocrRunRef.current = runId
+    const runId = captureRunRef.current + 1
+    captureRunRef.current = runId
     canvas.toBlob((blob) => {
-      if (!blob || ocrRunRef.current !== runId) return
+      if (!blob || captureRunRef.current !== runId) return
       revokeCapturedImage()
       const previewUrl = URL.createObjectURL(blob)
       capturedImageUrlRef.current = previewUrl
       setCapturedImage(previewUrl)
     }, 'image/jpeg', 0.86)
     setCameraError('')
-    setShowBasicRead(false)
+    setShowManualFallback(false)
     setCameraMessage('Captura tomada. Lista para analizar.')
-    setAssistMessage('Toca Analizar con IA o escribe el codigo.')
+    setAssistMessage('Toca Analizar con IA para leer etiquetas.')
     window.setTimeout(() => inputRef.current?.focus(), 90)
-  }
-
-  function runBasicRead() {
-    const canvas = canvasRef.current
-    if (!canvas || !capturedImage) return
-
-    const runId = ocrRunRef.current + 1
-    ocrRunRef.current = runId
-    setCameraError('')
-    runOcr(createOcrImageVariants(canvas), runId)
   }
 
   function goBack() {
@@ -431,11 +354,6 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
                     Cancelar
                   </button>
                 )}
-                {showBasicRead && !isAiAnalyzing && (
-                  <button type="button" style={styles.basicReadButton} disabled={isOcrReading} onClick={runBasicRead}>
-                    {isOcrReading ? 'Intentando lectura...' : 'Intentar lectura basica'}
-                  </button>
-                )}
                 <button type="button" style={styles.retakeButton} onClick={repeatCapture}>
                   Repetir captura
                 </button>
@@ -447,15 +365,14 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
             <section style={styles.assistBox}>
               <div style={styles.detectedHeader}>
                 <strong>Sugerencias</strong>
-                <span>{isAiAnalyzing ? 'Analizando...' : isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
+                <span>{isAiAnalyzing ? 'Analizando...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
               {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando con IA...</div>}
-              {isOcrReading && <div style={styles.ocrStatus}>Buscando sugerencias...</div>}
-              {ocrDetectedCodes.length > 0 && (
+              {detectedCodes.length > 0 && (
                 <div style={styles.ocrCodes}>
                   <span>Sugerencias detectadas</span>
                   <div style={styles.ocrChipGrid}>
-                    {ocrDetectedCodes.map((code) => (
+                    {detectedCodes.map((code) => (
                       <button
                         type="button"
                         key={`${code.code}-${code.parsedPrice || ''}`}
@@ -468,30 +385,33 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
                   </div>
                 </div>
               )}
-              <TextInput
-                ref={inputRef}
-                value={codeInput}
-                onChange={(event) => setCodeInput(event.target.value.toUpperCase())}
-                onKeyDown={(event) => event.key === 'Enter' && submitCode(codeInput)}
-                placeholder="A2, A2-30, COD-A2..."
-                disabled={!capturedImage || isInterpreting}
-                style={styles.codeInput}
-              />
-              {livePreview?.ok && (
-                <div style={styles.previewPill}>
-                  {livePreview.code} / {livePreview.category}{livePreview.material ? ` / ${livePreview.material}` : ''}{livePreview.parsedPrice ? ` / $${livePreview.parsedPrice}` : ''}
-                </div>
+              {showManualFallback && (
+                <>
+                  <TextInput
+                    ref={inputRef}
+                    value={codeInput}
+                    onChange={(event) => setCodeInput(event.target.value.toUpperCase())}
+                    onKeyDown={(event) => event.key === 'Enter' && submitCode(codeInput)}
+                    placeholder="A2, A2-30, COD-A2..."
+                    disabled={!capturedImage || isInterpreting}
+                    style={styles.codeInput}
+                  />
+                  {livePreview?.ok && (
+                    <div style={styles.previewPill}>
+                      {livePreview.code} / {livePreview.category}{livePreview.material ? ` / ${livePreview.material}` : ''}{livePreview.parsedPrice ? ` / $${livePreview.parsedPrice}` : ''}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    style={{ ...styles.interpretButton, opacity: canInterpret ? 1 : 0.45 }}
+                    disabled={!canInterpret}
+                    onClick={() => submitCode(codeInput)}
+                  >
+                    {isInterpreting ? 'Agregando...' : 'Interpretar'}
+                  </button>
+                </>
               )}
-              <button
-                type="button"
-                style={{ ...styles.interpretButton, opacity: canInterpret ? 1 : 0.45 }}
-                disabled={!canInterpret}
-                onClick={() => submitCode(codeInput)}
-              >
-                {isInterpreting ? 'Agregando...' : 'Interpretar'}
-              </button>
               {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
-              {ocrText && !ocrDetectedCodes.length && <div style={styles.ocrRaw}>Texto leido: {ocrText.slice(0, 120)}</div>}
             </section>
 
             {codeHistory.length > 0 && (
@@ -770,18 +690,6 @@ const styles = {
     fontSize: 14,
     fontWeight: 720
   },
-  basicReadButton: {
-    width: '100%',
-    minHeight: 46,
-    border: '1px solid #d7d7d7',
-    borderRadius: 17,
-    background: '#f7f7f7',
-    color: '#111111',
-    boxSizing: 'border-box',
-    maxWidth: '100%',
-    fontSize: 14,
-    fontWeight: 700
-  },
   ocrStatus: {
     border: '1px solid #0EA371',
     borderRadius: 18,
@@ -823,12 +731,6 @@ const styles = {
     fontSize: 13,
     fontWeight: 780,
     boxSizing: 'border-box'
-  },
-  ocrRaw: {
-    color: '#666666',
-    fontSize: 12,
-    fontWeight: 560,
-    overflowWrap: 'anywhere'
   },
   historyBox: {
     border: '1px solid #e4e4e4',

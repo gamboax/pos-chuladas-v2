@@ -12,7 +12,10 @@ createRoot(document.getElementById('root')).render(
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
-      .then((registration) => registration.update().catch(() => {}))
+      .then((registration) => {
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' })
+        return registration.update().catch(() => {})
+      })
       .catch(() => {})
   })
 }
