@@ -30,27 +30,6 @@ const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Tarjeta', 'Mixto']
 const CUSTOMER_TYPES = ['Revender', 'Uso propio']
 const DRAFT_KEY = 'pos_chuladas_sale_draft_v2'
 
-const SCANNER_EXAMPLES = [
-  {
-    id: 'scan-a2',
-    code_detected: 'A2',
-    category: 'Anillo',
-    material: 'Oro laminado',
-    quantity: 2,
-    unitPrice: 35,
-    subtotal: 70
-  },
-  {
-    id: 'scan-e1',
-    code_detected: 'E1',
-    category: 'Arete',
-    material: 'Acero inoxidable',
-    quantity: 1,
-    unitPrice: 30,
-    subtotal: 30
-  }
-]
-
 function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const draft = useMemo(() => readDraft(), [])
   const [screen, setScreen] = useState(draft.activeCity ? 'cashier' : 'city')
@@ -66,7 +45,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [quantityInput, setQuantityInput] = useState('')
   const [priceInput, setPriceInput] = useState('')
 
-  const [scannedItems, setScannedItems] = useState(getScannerExamples)
+  const [scannedItems, setScannedItems] = useState([])
 
   const [discountMode, setDiscountMode] = useState(draft.discountMode || '0')
   const [customDiscount, setCustomDiscount] = useState(draft.customDiscount || '')
@@ -211,7 +190,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     setCustomerPhone('')
     setCustomerType('')
     setSaveError('')
-    setScannedItems(getScannerExamples())
+    setScannedItems([])
 
     if (!keepCity) {
       setActiveCity('')
@@ -291,8 +270,24 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   }
 
   function openScanner() {
-    setScannedItems((current) => (current.length ? current : getScannerExamples()))
     setScreen('scanner')
+  }
+
+  function addScannedSuggestion(item) {
+    const quantity = Number(item.quantity || 1)
+    const unitPrice = Number(item.unitPrice || 0)
+
+    setScannedItems((current) => [
+      ...current,
+      {
+        ...item,
+        id: createId('scanner-suggested'),
+        capture_origin: 'scanner',
+        quantity,
+        unitPrice,
+        subtotal: quantity * unitPrice
+      }
+    ])
   }
 
   function updateScannedItem(id, field, value) {
@@ -321,7 +316,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     setCart((current) => [...current, ...itemsToAdd])
     setFeedback(`${itemsToAdd.length} articulo(s) agregados`)
-    setScannedItems(getScannerExamples())
+    setScannedItems([])
     setScreen('cashier')
   }
 
@@ -482,6 +477,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
           items={scannedItems}
           onBack={() => setScreen('cashier')}
           onChange={updateScannedItem}
+          onAddSuggestion={addScannedSuggestion}
           onRemove={removeScannedItem}
           onConfirm={confirmScannedItems}
         />
@@ -804,10 +800,6 @@ function ticketTime(sale) {
   if (!sale.created_at) return 'Sin hora'
   return new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
 }
-function getScannerExamples() {
-  return SCANNER_EXAMPLES.map((item) => ({ ...item }))
-}
-
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }

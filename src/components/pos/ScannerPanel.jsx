@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
-import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TopBar } from './ui'
+import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
 
-export default function ScannerPanel({ items, onBack, onChange, onRemove, onConfirm }) {
+export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion, onRemove, onConfirm }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
@@ -10,6 +11,11 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
   const [capturedImage, setCapturedImage] = useState('')
+  const [codeInput, setCodeInput] = useState('')
+  const [assistMessage, setAssistMessage] = useState('Toma una foto y escribe el codigo visible, por ejemplo A2.')
+  const [assistError, setAssistError] = useState('')
+  const [isInterpreting, setIsInterpreting] = useState(false)
+  const canConfirm = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
 
   useEffect(() => {
     return () => stopCamera(false)
@@ -17,11 +23,15 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
 
   async function startCamera() {
     if (streamRef.current) {
-      attachVideoStream()
+      setCapturedImage('')
+      await attachVideoStream()
+      setCameraActive(true)
+      setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
       return
     }
 
     setCameraError('')
+    setCapturedImage('')
     setCameraMessage('Solicitando permiso de camara...')
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -41,7 +51,6 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
       })
 
       streamRef.current = stream
-
       await attachVideoStream()
 
       setCameraActive(true)
@@ -60,11 +69,15 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
     await videoRef.current.play().catch(() => {})
   }
 
-  function showLivePreview() {
+  async function repeatCapture() {
     setCapturedImage('')
-    window.requestAnimationFrame(() => {
-      attachVideoStream()
-    })
+    setCameraError('')
+    setCameraMessage(streamRef.current ? 'Camara activa. Toma otra captura.' : 'Activa la camara para repetir captura.')
+
+    if (streamRef.current) {
+      await attachVideoStream()
+      setCameraActive(true)
+    }
   }
 
   function stopCamera(updateState = true) {
@@ -97,7 +110,40 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
     context.drawImage(video, 0, 0, width, height)
     setCapturedImage(canvas.toDataURL('image/jpeg', 0.86))
     setCameraError('')
-    setCameraMessage('Captura tomada. OCR real se conectara en la siguiente fase.')
+    setCameraMessage('Captura tomada. Listo para revisar.')
+    setAssistMessage('Escribe el codigo detectado y toca Interpretar codigo.')
+  }
+
+  async function interpretCode() {
+    if (!capturedImage || isInterpreting) return
+
+    const parsed = parseProductCode(codeInput)
+
+    setAssistError('')
+
+    if (!parsed.ok) {
+      setAssistError(parsed.message)
+      return
+    }
+
+    setIsInterpreting(true)
+    setAssistMessage('Buscando precio sugerido...')
+
+    const suggestedPrice = await lookupSuggestedPrice(parsed.code)
+
+    onAddSuggestion({
+      capture_origin: 'scanner',
+      category: parsed.category,
+      material: parsed.material,
+      code_detected: parsed.code,
+      quantity: 1,
+      unitPrice: suggestedPrice || 0,
+      subtotal: suggestedPrice || 0
+    })
+
+    setCodeInput('')
+    setAssistMessage(suggestedPrice ? `${parsed.code} interpretado con precio sugerido.` : `${parsed.code} interpretado. Captura el precio para confirmar.`)
+    setIsInterpreting(false)
   }
 
   function goBack() {
@@ -107,59 +153,91 @@ export default function ScannerPanel({ items, onBack, onChange, onRemove, onConf
 
   return (
     <>
-      <TopBar title="Escanear articulos" subtitle="Camara real / OCR pendiente" onBack={goBack} />
+      <TopBar title="Escanear articulos" subtitle="Camara real / captura asistida" onBack={goBack} />
       <Panel style={styles.panelOuter}>
         <div style={styles.panelInner}>
           <Stack style={styles.stack}>
-          <div style={styles.cameraBox}>
-            {capturedImage ? (
-              <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
-            ) : (
-              <video ref={videoRef} style={styles.video} playsInline muted autoPlay />
+            <div style={styles.cameraBox}>
+              {capturedImage ? (
+                <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
+              ) : (
+                <video ref={videoRef} style={styles.video} playsInline muted autoPlay />
+              )}
+              {!cameraActive && !capturedImage && (
+                <div style={styles.cameraOverlay}>
+                  <strong>Vista de camara</strong>
+                  <Muted>Activa la camara para ver el preview.</Muted>
+                </div>
+              )}
+            </div>
+
+            <div style={styles.statusBox}>
+              <strong>{cameraMessage}</strong>
+              {cameraError && <span>{cameraError}</span>}
+            </div>
+
+            <div style={styles.cameraActions}>
+              <SecondaryButton onClick={goBack}>Volver</SecondaryButton>
+              <button type="button" style={styles.cameraButton} onClick={startCamera} disabled={cameraActive && !capturedImage}>
+                {cameraActive && !capturedImage ? 'Camara activa' : 'Activar camara'}
+              </button>
+              <button type="button" style={styles.captureButton} onClick={captureFrame} disabled={!cameraActive || Boolean(capturedImage)}>
+                Tomar captura
+              </button>
+            </div>
+
+            {capturedImage && (
+              <button type="button" style={styles.retakeButton} onClick={repeatCapture}>
+                Repetir captura
+              </button>
             )}
-            {!cameraActive && !capturedImage && (
-              <div style={styles.cameraOverlay}>
-                <strong>Vista de camara</strong>
-                <Muted>Activa la camara para ver el preview.</Muted>
+
+            <canvas ref={canvasRef} style={styles.canvas} />
+
+            <section style={styles.assistBox}>
+              <div style={styles.detectedHeader}>
+                <strong>Captura asistida</strong>
+                <span>{capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
+              <TextInput
+                value={codeInput}
+                onChange={(event) => setCodeInput(event.target.value.toUpperCase())}
+                onKeyDown={(event) => event.key === 'Enter' && interpretCode()}
+                placeholder="Codigo: A2, E1, CAJA..."
+                disabled={!capturedImage || isInterpreting}
+                style={styles.codeInput}
+              />
+              <button
+                type="button"
+                style={{ ...styles.interpretButton, opacity: capturedImage && codeInput.trim() && !isInterpreting ? 1 : 0.45 }}
+                disabled={!capturedImage || !codeInput.trim() || isInterpreting}
+                onClick={interpretCode}
+              >
+                {isInterpreting ? 'Interpretando...' : 'Interpretar codigo'}
+              </button>
+              {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
+            </section>
+
+            <div style={styles.detectedHeader}>
+              <strong>Articulos sugeridos</strong>
+              <span>{items.length} editable(s)</span>
+            </div>
+
+            {items.length === 0 ? (
+              <div style={styles.emptyBox}>Aun no hay articulos sugeridos.</div>
+            ) : (
+              items.map((item) => (
+                <EditableItem key={item.id} item={item} onChange={onChange} onRemove={onRemove} />
+              ))
             )}
-          </div>
 
-          <div style={styles.statusBox}>
-            <strong>{cameraMessage}</strong>
-            {cameraError && <span>{cameraError}</span>}
-          </div>
+            {!canConfirm && items.length > 0 && (
+              <div style={styles.assistError}>Agrega precio mayor a $0 antes de confirmar.</div>
+            )}
 
-          <div style={styles.cameraActions}>
-            <SecondaryButton onClick={goBack}>Volver</SecondaryButton>
-            <button type="button" style={styles.cameraButton} onClick={startCamera} disabled={cameraActive}>
-              {cameraActive ? 'Camara activa' : 'Activar camara'}
-            </button>
-            <button type="button" style={styles.captureButton} onClick={captureFrame} disabled={!cameraActive}>
-              Tomar captura
-            </button>
-          </div>
-
-          {capturedImage && (
-            <button type="button" style={styles.retakeButton} onClick={showLivePreview}>
-              Ver camara otra vez
-            </button>
-          )}
-
-          <canvas ref={canvasRef} style={styles.canvas} />
-
-          <div style={styles.detectedHeader}>
-            <strong>Articulos detectados</strong>
-            <span>Demo editable</span>
-          </div>
-
-          {items.map((item) => (
-            <EditableItem key={item.id} item={item} onChange={onChange} onRemove={onRemove} />
-          ))}
-
-          <PrimaryButton tone="success" disabled={!items.length} onClick={onConfirm}>
-            Confirmar y agregar
-          </PrimaryButton>
+            <PrimaryButton tone="success" disabled={!canConfirm} onClick={onConfirm}>
+              Confirmar y agregar
+            </PrimaryButton>
           </Stack>
         </div>
       </Panel>
@@ -180,7 +258,7 @@ function cameraErrorMessage(error) {
     return 'La camara necesita HTTPS. En Vercel funcionara con dominio seguro.'
   }
 
-  return 'No se pudo iniciar la camara. Puedes seguir agregando los articulos demo manualmente.'
+  return 'No se pudo iniciar la camara. Puedes seguir agregando articulos manualmente.'
 }
 
 const styles = {
@@ -198,17 +276,17 @@ const styles = {
     width: '100%',
     maxWidth: '100%',
     minWidth: 0,
-    padding: 20,
+    padding: 18,
     boxSizing: 'border-box'
   },
   stack: {
     width: '100%',
-    gap: 13,
+    gap: 12,
     minWidth: 0,
     maxWidth: '100%'
   },
   cameraBox: {
-    minHeight: 242,
+    minHeight: 220,
     border: '1px solid rgba(17, 17, 17, 0.84)',
     borderRadius: 23,
     background: '#111111',
@@ -223,7 +301,7 @@ const styles = {
   },
   video: {
     width: '100%',
-    height: 242,
+    height: 220,
     display: 'block',
     objectFit: 'cover',
     background: '#111111',
@@ -232,7 +310,7 @@ const styles = {
   },
   previewImage: {
     width: '100%',
-    height: 242,
+    height: 220,
     display: 'block',
     objectFit: 'cover',
     maxWidth: '100%',
@@ -270,15 +348,15 @@ const styles = {
     width: '100%',
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
-    gap: 10,
+    gap: 9,
     minWidth: 0,
     maxWidth: '100%'
   },
   cameraButton: {
     width: '100%',
-    minHeight: 56,
+    minHeight: 54,
     border: '1px solid #111111',
-    borderRadius: 20,
+    borderRadius: 19,
     background: '#ffffff',
     color: '#111111',
     boxSizing: 'border-box',
@@ -289,9 +367,9 @@ const styles = {
   },
   captureButton: {
     width: '100%',
-    minHeight: 56,
+    minHeight: 54,
     border: '1px solid #0EA371',
-    borderRadius: 20,
+    borderRadius: 19,
     background: '#10B981',
     color: '#ffffff',
     boxSizing: 'border-box',
@@ -303,7 +381,7 @@ const styles = {
   },
   retakeButton: {
     width: '100%',
-    minHeight: 52,
+    minHeight: 50,
     border: '1px solid #d7d7d7',
     borderRadius: 18,
     background: '#f7f7f7',
@@ -315,6 +393,57 @@ const styles = {
   },
   canvas: {
     display: 'none'
+  },
+  assistBox: {
+    border: '1px solid #e4e4e4',
+    borderRadius: 22,
+    background: '#fbfbfb',
+    padding: 12,
+    display: 'grid',
+    gap: 10,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
+  },
+  codeInput: {
+    minHeight: 54,
+    textTransform: 'uppercase'
+  },
+  interpretButton: {
+    width: '100%',
+    minHeight: 54,
+    border: '1px solid #111111',
+    borderRadius: 19,
+    background: '#111111',
+    color: '#ffffff',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    fontSize: 16,
+    fontWeight: 740
+  },
+  assistError: {
+    border: '1px solid #fecaca',
+    borderRadius: 16,
+    background: '#fff5f5',
+    color: '#991b1b',
+    padding: 11,
+    fontSize: 13,
+    fontWeight: 700,
+    textAlign: 'center',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
+  },
+  emptyBox: {
+    border: '1px dashed #a3a3a3',
+    borderRadius: 18,
+    background: '#f7f7f7',
+    color: '#555555',
+    padding: 14,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: 560,
+    boxSizing: 'border-box',
+    maxWidth: '100%'
   },
   detectedHeader: {
     width: '100%',
