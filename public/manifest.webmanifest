@@ -1,0 +1,27 @@
+{
+  "name": "POS Chuladas V2",
+  "short_name": "Chuladas POS",
+  "description": "Caja mobile-first para eventos de Joyeria Chuladas Mayoreo.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "background_color": "#f4f4f4",
+  "theme_color": "#10B981",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

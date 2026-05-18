@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
 import { fetchTodayAdminData, getPendingLocalSales, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
@@ -84,6 +84,8 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [pendingSales, setPendingSales] = useState([])
   const [pendingSyncMessage, setPendingSyncMessage] = useState('')
   const [isSyncingPending, setIsSyncingPending] = useState(false)
+  const [pendingCount, setPendingCount] = useState(() => (draft.activeCity ? getPendingLocalSales({ city: draft.activeCity }).length : 0))
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
 
   const cashierName = user?.name || 'Cajera'
   const cashierId = user?.id || user?.user_id || null
@@ -95,6 +97,14 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const total = Math.max(0, subtotal - discountAmount)
   const menuItems = buildMenuItems({ setScreen, changeCity, openPendingSales, onLogout, canSeeAdmin, onOpenAdmin, setMenuOpen })
   const ticketText = lastSale ? buildTicket(lastSale) : ''
+  const refreshPendingCount = useCallback(() => {
+    if (!activeCity) {
+      setPendingCount(0)
+      return
+    }
+
+    setPendingCount(getPendingLocalSales({ city: activeCity }).length)
+  }, [activeCity])
 
   useEffect(() => {
     if (!activeCity || !folio || screen === 'saved') return
@@ -146,12 +156,26 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     return () => window.clearTimeout(timeout)
   }, [feedback])
 
+  useEffect(() => {
+    const updateOnlineState = () => setIsOnline(navigator.onLine)
+
+    updateOnlineState()
+    window.addEventListener('online', updateOnlineState)
+    window.addEventListener('offline', updateOnlineState)
+
+    return () => {
+      window.removeEventListener('online', updateOnlineState)
+      window.removeEventListener('offline', updateOnlineState)
+    }
+  }, [])
+
   function startCity() {
     const nextCity = cityInput.trim()
 
     if (!nextCity) return
 
     setActiveCity(nextCity)
+    setPendingCount(getPendingLocalSales({ city: nextCity }).length)
     setFolio(createFolio(nextCity))
     resetSale({ keepCity: true })
     setScreen('cashier')
@@ -173,6 +197,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     setMenuOpen(false)
     clearDraft()
     resetSale({ keepCity: false })
+    setPendingCount(0)
     setSelectedSummaryTicket(null)
     setScreen('city')
   }
@@ -347,6 +372,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
       }
 
       setLastSale(ticketSale)
+      if (ticketSale.storage === 'local') refreshPendingCount()
       clearDraft()
       resetSale()
       setScreen('saved')
@@ -358,7 +384,9 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   }
 
   function openPendingSales() {
-    setPendingSales(getPendingLocalSales({ city: activeCity }))
+    const pending = getPendingLocalSales({ city: activeCity })
+    setPendingSales(pending)
+    setPendingCount(pending.length)
     setPendingSyncMessage('')
     setMenuOpen(false)
     setScreen('pending')
@@ -372,7 +400,9 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     try {
       const result = await retryPendingLocalSales({ city: activeCity })
-      setPendingSales(getPendingLocalSales({ city: activeCity }))
+      const pending = getPendingLocalSales({ city: activeCity })
+      setPendingSales(pending)
+      setPendingCount(pending.length)
       setPendingSyncMessage(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
     } catch (error) {
       setPendingSyncMessage(error.message || 'No se pudieron sincronizar las ventas pendientes.')
@@ -417,6 +447,17 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
   return (
     <Page>
+      {activeCity && screen !== 'saved' && screen !== 'city' && (
+        <EventSafetyBanner
+          city={activeCity}
+          isOnline={isOnline}
+          pendingCount={pendingCount}
+          syncing={isSyncingPending}
+          onOpenPending={openPendingSales}
+          onRetry={retryPendingSales}
+        />
+      )}
+
       {screen === 'capture' && (
         <CaptureCalculator
           cashierName={cashierName}
@@ -631,6 +672,35 @@ function PendingSalesView({ city, sales, message, syncing, onBack, onRetry }) {
     </>
   )
 }
+
+function EventSafetyBanner({ city, isOnline, pendingCount, syncing, onOpenPending, onRetry }) {
+  const hasPending = pendingCount > 0
+
+  return (
+    <section style={styles.eventBanner} aria-label="Estado del evento">
+      <div style={styles.eventBannerInfo}>
+        <span style={styles.eventCity}>{city}</span>
+        <span style={styles.eventMeta}>
+          <span style={{ ...styles.eventDot, background: isOnline ? '#10B981' : '#f59e0b' }} />
+          {isOnline ? 'En linea' : 'Sin conexion'}
+        </span>
+        <span style={styles.eventMeta}>{hasPending ? `${pendingCount} pendiente(s)` : 'Sin pendientes'}</span>
+      </div>
+
+      {hasPending && (
+        <div style={styles.eventActions}>
+          <button type="button" style={styles.eventGhostButton} onClick={onOpenPending}>
+            Ver
+          </button>
+          <button type="button" disabled={syncing || !isOnline} style={{ ...styles.eventRetryButton, opacity: syncing || !isOnline ? 0.55 : 1 }} onClick={onRetry}>
+            {syncing ? 'Sync...' : 'Reintentar'}
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function CashierDaySummaryView({ cashierName, city, data, loading, error, selectedTicket, onSelectTicket, onBack }) {
   const metrics = useMemo(() => buildCashierMetrics(data.sales || []), [data.sales])
   const visibleTickets = (data.sales || []).slice(0, 8)
@@ -804,6 +874,85 @@ function clearDraft() {
 }
 
 const styles = {
+  eventBanner: {
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    marginBottom: 12,
+    border: '1px solid rgba(17, 17, 17, 0.12)',
+    borderRadius: 20,
+    background: 'rgba(255, 255, 255, 0.82)',
+    boxShadow: '0 8px 18px rgba(17, 17, 17, 0.045)',
+    padding: '10px 11px',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 9,
+    boxSizing: 'border-box',
+    backdropFilter: 'blur(10px)'
+  },
+  eventBannerInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '6px 9px',
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  eventCity: {
+    minWidth: 0,
+    maxWidth: '100%',
+    color: '#111111',
+    fontSize: 14,
+    fontWeight: 740,
+    overflowWrap: 'anywhere'
+  },
+  eventMeta: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    color: '#555555',
+    fontSize: 12,
+    fontWeight: 650,
+    whiteSpace: 'nowrap'
+  },
+  eventDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    flexShrink: 0,
+    boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.1)'
+  },
+  eventActions: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 0.7fr) minmax(0, 1fr)',
+    gap: 8,
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  eventGhostButton: {
+    width: '100%',
+    maxWidth: '100%',
+    minHeight: 40,
+    border: '1px solid #111111',
+    borderRadius: 15,
+    background: '#ffffff',
+    color: '#111111',
+    fontSize: 13,
+    fontWeight: 720,
+    boxSizing: 'border-box'
+  },
+  eventRetryButton: {
+    width: '100%',
+    maxWidth: '100%',
+    minHeight: 40,
+    border: '1px solid #0EA371',
+    borderRadius: 15,
+    background: '#10B981',
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 740,
+    boxSizing: 'border-box'
+  },
   mainStack: {
     display: 'grid',
     gap: 14
