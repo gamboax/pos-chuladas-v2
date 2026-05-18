@@ -10,7 +10,7 @@ import {
 import { money } from '../../lib/ticket'
 
 const EXPENSE_CATEGORIES = ['Renta del lugar', 'Gasolina', 'Comida', 'Pago de colaborador', 'Casetas', 'Otros']
-const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete']
+const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete', 'Caja']
 const MATERIALS = ['Acero inoxidable', 'Oro laminado', 'Bano de rodio', 'Bano de plata']
 
 function AdminDashboard({ user, onBackToPOS, onLogout }) {
@@ -568,7 +568,7 @@ function roleLabel(role) {
 }
 
 const styles = {
-  page: { minHeight: '100dvh', background: '#f4f4f4', color: '#111111', fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: 'calc(18px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))', boxSizing: 'border-box', overflowX: 'hidden' },
+  page: { minHeight: '100dvh', background: '#f4f4f4', color: '#111111', fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: 'calc(18px + env(safe-area-inset-top)) 18px calc(26px + env(safe-area-inset-bottom))', boxSizing: 'border-box', overflowX: 'hidden', overflowY: 'visible', touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' },
   shell: { width: '100%', maxWidth: 430, minWidth: 0, margin: '0 auto', boxSizing: 'border-box' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, background: '#ffffff', border: '1px solid rgba(17, 17, 17, 0.84)', borderRadius: 999, padding: '8px 8px 8px 16px', boxShadow: '0 10px 24px rgba(17, 17, 17, 0.06)' },
   headerTitle: { fontSize: 16, fontWeight: 700, lineHeight: 1.15 },

@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --pos-green: #10b981;
   --pos-green-dark: #0ea371;
   --pos-green-soft: #dff8ec;
@@ -42,14 +42,21 @@ body {
 
 html {
   background: #f4f4f4;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   background: #f4f4f4;
-  overscroll-behavior-y: none;
+  overscroll-behavior-y: auto;
   overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 #root {
@@ -62,6 +69,8 @@ body {
   flex-direction: column;
   box-sizing: border-box;
   overflow-x: hidden;
+  overflow-y: visible;
+  touch-action: pan-y;
 }
 
 button,

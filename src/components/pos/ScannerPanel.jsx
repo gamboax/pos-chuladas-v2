@@ -214,6 +214,7 @@ const styles = {
     background: '#111111',
     position: 'relative',
     overflow: 'hidden',
+    touchAction: 'pan-y',
     boxShadow: '0 6px 12px rgba(17, 17, 17, 0.08)',
     boxSizing: 'border-box',
     width: '100%',
@@ -247,7 +248,9 @@ const styles = {
     color: '#ffffff',
     textAlign: 'center',
     padding: 18,
-    background: 'linear-gradient(180deg, rgba(17,17,17,0.24), rgba(17,17,17,0.7))'
+    background: 'linear-gradient(180deg, rgba(17,17,17,0.24), rgba(17,17,17,0.7))',
+    pointerEvents: 'none',
+    touchAction: 'pan-y'
   },
   statusBox: {
     border: '1px solid #0EA371',

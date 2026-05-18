@@ -22,7 +22,8 @@ const CATEGORIES = [
   'Dije',
   'Rosario',
   'Juego',
-  'Arete'
+  'Arete',
+  'Caja'
 ]
 
 const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Tarjeta', 'Mixto']

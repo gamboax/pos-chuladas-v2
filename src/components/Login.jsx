@@ -92,7 +92,9 @@ const page = {
   placeItems: 'center',
   padding: 'calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom))',
   boxSizing: 'border-box',
-  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  touchAction: 'pan-y',
+  WebkitOverflowScrolling: 'touch'
 }
 
 const card = {

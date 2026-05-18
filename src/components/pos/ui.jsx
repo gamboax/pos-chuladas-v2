@@ -141,6 +141,9 @@ export const styles = {
     boxSizing: 'border-box',
     textAlign: 'left',
     overflowX: 'hidden',
+    overflowY: 'visible',
+    touchAction: 'pan-y',
+    WebkitOverflowScrolling: 'touch',
     width: '100%'
   },
   centeredPage: {
