@@ -4,6 +4,7 @@ import {
   fetchInventoryData,
   fetchTodayAdminData,
   getPendingLocalSales,
+  importPartialV1Sales,
   markTicketSent,
   saveCashCut,
   saveExpense,
@@ -15,6 +16,13 @@ import { money } from '../../lib/ticket'
 const EXPENSE_CATEGORIES = ['Renta del lugar', 'Gasolina', 'Comida', 'Pago de colaborador', 'Casetas', 'Otros']
 const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete', 'Caja']
 const MATERIALS = ['Acero inoxidable', 'Oro laminado', 'Bano de rodio', 'Bano de plata']
+const V1_IMPORT_SQL = `alter table public.sales add column if not exists source text;
+alter table public.sales add column if not exists imported_partial boolean not null default false;
+alter table public.sales add column if not exists original_source_id text;
+alter table public.sales add column if not exists imported_at timestamptz;
+alter table public.sales add column if not exists import_notes text;
+create index if not exists sales_source_idx on public.sales (source);
+create index if not exists sales_original_source_id_idx on public.sales (original_source_id);`
 
 function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const role = user?.role || 'admin'
@@ -45,11 +53,17 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [lotForm, setLotForm] = useState({ name: '', supplier: '', purchasePlace: '', purchaseDate: todayInputValue(), totalInvestment: '', notes: '' })
   const [selectedLotId, setSelectedLotId] = useState('')
   const [lotItemForm, setLotItemForm] = useState({ code: '', category: PRODUCT_CATEGORIES[0], material: MATERIALS[0], quantityPurchased: '', unitCost: '', suggestedPrice: '' })
+  const [v1ImportText, setV1ImportText] = useState('')
+  const [v1ImportCity, setV1ImportCity] = useState(defaultCity || '')
+  const [v1ImportDate, setV1ImportDate] = useState(todayInputValue())
+  const [v1ImportPreview, setV1ImportPreview] = useState(null)
+  const [v1ImportResult, setV1ImportResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingExpense, setSavingExpense] = useState(false)
   const [savingCashCut, setSavingCashCut] = useState(false)
   const [savingLot, setSavingLot] = useState(false)
   const [savingLotItem, setSavingLotItem] = useState(false)
+  const [importingV1, setImportingV1] = useState(false)
   const [savingCancellation, setSavingCancellation] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -315,6 +329,49 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError(saveError.message || 'No se pudo guardar el articulo.')
     } finally {
       setSavingLotItem(false)
+    }
+  }
+
+  async function handleV1File(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    setV1ImportText(text)
+    setV1ImportPreview(null)
+    setV1ImportResult(null)
+  }
+
+  function handlePreviewV1Import() {
+    try {
+      const preview = buildV1ImportPreview(v1ImportText, {
+        fallbackCity: v1ImportCity || effectiveCity,
+        fallbackDate: v1ImportDate,
+        existingSales: summary.sales
+      })
+      setV1ImportPreview(preview)
+      setV1ImportResult(null)
+      setError('')
+    } catch (previewError) {
+      setError(previewError.message || 'No se pudo leer el CSV V1.')
+    }
+  }
+
+  async function handleImportV1Sales() {
+    if (!isSuperAdmin || importingV1 || !v1ImportPreview?.validRows.length) return
+
+    setImportingV1(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const result = await importPartialV1Sales(v1ImportPreview.validRows)
+      setV1ImportResult(result)
+      setNotice(`Import V1: ${result.imported.length} importada(s), ${result.duplicated.length} duplicada(s), ${result.errors.length} error(es).`)
+      await loadDashboard()
+    } catch (importError) {
+      setError(importError.message || 'No se pudo importar ventas V1.')
+    } finally {
+      setImportingV1(false)
     }
   }
 
@@ -665,6 +722,61 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
             {isSuperAdmin && (
               <>
                 <section style={styles.cleanSection}>
+                  <div style={styles.sectionHead}>
+                    <h2 style={styles.sectionTitle}>Importar ventas V1</h2>
+                    <span style={styles.chip}>Sales-only</span>
+                  </div>
+                  <div style={styles.notice}>Importa solo ventas. No crea sale_items, no toca inventario y marca imported_partial.</div>
+                  <input type="file" accept=".csv,text/csv" onChange={handleV1File} style={styles.input} />
+                  <textarea
+                    value={v1ImportText}
+                    onChange={(event) => { setV1ImportText(event.target.value); setV1ImportPreview(null); setV1ImportResult(null) }}
+                    placeholder="Pega CSV de sales V1"
+                    style={styles.textarea}
+                  />
+                  <div style={styles.twoColumns}>
+                    <input value={v1ImportCity} onChange={(event) => setV1ImportCity(event.target.value)} placeholder="Ciudad fallback" style={styles.input} />
+                    <input value={v1ImportDate} onChange={(event) => setV1ImportDate(event.target.value)} type="date" style={styles.input} />
+                  </div>
+                  <button type="button" style={styles.secondaryButton} onClick={handlePreviewV1Import} disabled={!v1ImportText.trim()}>
+                    Preview importacion
+                  </button>
+                  {v1ImportPreview && (
+                    <div style={styles.auditGroup}>
+                      <div style={styles.grid}>
+                        <Metric label="Validas" value={v1ImportPreview.validRows.length} />
+                        <Metric label="Duplicadas" value={v1ImportPreview.duplicateRows.length} />
+                        <Metric label="Errores" value={v1ImportPreview.errorRows.length} />
+                        <Metric label="Parciales" value={v1ImportPreview.validRows.length} />
+                      </div>
+                      <div style={styles.itemStack}>
+                        {v1ImportPreview.rows.slice(0, 6).map((row) => (
+                          <AuditInfoCard
+                            key={`${row.index}-${row.folio}`}
+                            title={row.folio || `Fila ${row.index}`}
+                            meta={`${row.city || 'Sin ciudad'} / ${row.createdAtLabel} / ${row.statusLabel}`}
+                            value={money(row.total)}
+                            status={row.warning || 'Import parcial'}
+                          />
+                        ))}
+                      </div>
+                      <button type="button" style={styles.primaryButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={handleImportV1Sales}>
+                        {importingV1 ? 'Importando...' : 'Importar ventas V1'}
+                      </button>
+                    </div>
+                  )}
+                  {v1ImportResult && (
+                    <div style={styles.notice}>
+                      Importadas: {v1ImportResult.imported.length} / Duplicadas: {v1ImportResult.duplicated.length} / Errores: {v1ImportResult.errors.length} / Parciales: {v1ImportResult.partial}
+                    </div>
+                  )}
+                  <details style={styles.breakdownGroup}>
+                    <summary style={styles.breakdownSummary}>ALTER puntual si faltan columnas<span>SQL</span></summary>
+                    <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
+                  </details>
+                </section>
+
+                <section style={styles.cleanSection}>
                   <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Nuevo lote</h2></div>
                   <input value={lotForm.name} onChange={(event) => setLotForm((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre lote" style={styles.input} />
                   <input value={lotForm.supplier} onChange={(event) => setLotForm((current) => ({ ...current, supplier: event.target.value }))} placeholder="Proveedor" style={styles.input} />
@@ -910,6 +1022,7 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
   const items = saleItemsOf(sale)
   const timestamp = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
   const cancelled = isCancelledSale(sale)
+  const partialImport = isPartialImport(sale)
   const ticketText = buildDashboardTicket(sale)
 
   return (
@@ -928,6 +1041,8 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
       <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
       <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
       <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
+      {partialImport && <DataRow label="Importacion" value="V1 parcial sin articulos" strong />}
+      {partialImport && <div style={styles.notice}>Venta importada sin detalle de artículos.</div>}
       {sale.ticket_sent_at && <DataRow label="Ticket enviado" value={new Date(sale.ticket_sent_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })} />}
       {cancelled && <DataRow label="Motivo anulacion" value={cancellationReasonOf(sale) || 'Sin motivo'} strong />}
       <div style={styles.itemStack}>
@@ -936,7 +1051,7 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
           <span style={styles.chip}>{items.length ? `${saleUnits(sale)} pza(s)` : 'Sin detalle'}</span>
         </div>
         {items.length === 0 ? (
-          <div style={styles.empty}>Esta venta no tiene detalle de articulos.</div>
+          <div style={styles.empty}>{partialImport ? 'Venta importada sin detalle de artículos.' : 'Esta venta no tiene detalle de articulos.'}</div>
         ) : (
           items.map((item) => <TicketItemCard key={item.id || `${item.category}-${item.code_detected}-${item.quantity}`} item={item} inventory={inventory} />)
         )}
@@ -1234,9 +1349,13 @@ function ticketTimeLabel(sale) {
 function buildDashboardTicket(sale) {
   const items = saleItemsOf(sale)
   const date = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
-  const itemLines = items.length
-    ? items.map((item) => `${item.quantity} x ${[item.category, item.material, item.code_detected].filter(Boolean).join(' / ')} @ ${money(item.unit_price ?? item.unitPrice)} = ${money(itemLineTotal(item))}`).join('\n')
-    : 'Sin detalle de articulos'
+  let itemLines = 'Sin detalle de articulos'
+
+  if (items.length) {
+    itemLines = items.map((item) => `${item.quantity} x ${[item.category, item.material, item.code_detected].filter(Boolean).join(' / ')} @ ${money(item.unit_price ?? item.unitPrice)} = ${money(itemLineTotal(item))}`).join('\n')
+  } else if (isPartialImport(sale)) {
+    itemLines = 'Venta importada sin detalle de artículos.'
+  }
 
   return `JOYERIA CHULADAS MAYOREO
 
@@ -1300,9 +1419,234 @@ function buildSalesCsvRows(sales) {
     payment_method: sale.payment_method || '',
     customer_name: sale.customer_name || '',
     cashier_name: sale.cashier_name || '',
+    source: sale.source || '',
+    imported_partial: isPartialImport(sale) ? 'true' : 'false',
+    original_source_id: sale.original_source_id || '',
+    import_notes: sale.import_notes || '',
     categories: [...new Set(saleItemsOf(sale).map((item) => item.category).filter(Boolean))].join(' / '),
     cancellation_reason: cancellationReasonOf(sale)
   }))
+}
+
+function buildV1ImportPreview(csvText, options = {}) {
+  const rawRows = parseCsvRows(csvText)
+  if (!rawRows.length) throw new Error('El CSV no tiene filas para importar.')
+
+  const seenFolios = new Set()
+  const seenDuplicateKeys = new Set()
+  const existingFolios = new Set((options.existingSales || []).map((sale) => normalizeImportText(sale.folio)).filter(Boolean))
+  const existingDuplicateKeys = new Set((options.existingSales || []).map(importDuplicateKey).filter(Boolean))
+
+  const rows = rawRows.map((rawRow, index) => {
+    const row = normalizeV1CsvRow(rawRow, index + 1, options)
+    if (row.error) return row
+
+    const folioKey = normalizeImportText(row.folio)
+    const duplicateKey = importDuplicateKey(row)
+    const duplicateByFolio = folioKey && (existingFolios.has(folioKey) || seenFolios.has(folioKey))
+    const duplicateByData = duplicateKey && (existingDuplicateKeys.has(duplicateKey) || seenDuplicateKeys.has(duplicateKey))
+
+    if (folioKey) seenFolios.add(folioKey)
+    if (duplicateKey) seenDuplicateKeys.add(duplicateKey)
+
+    if (duplicateByFolio || duplicateByData) {
+      return {
+        ...row,
+        duplicate: true,
+        statusLabel: 'Duplicada',
+        warning: duplicateByFolio ? 'Duplicada por folio' : 'Duplicada por fecha/total/cliente'
+      }
+    }
+
+    return row
+  })
+
+  return {
+    rows,
+    validRows: rows.filter((row) => !row.error && !row.duplicate),
+    duplicateRows: rows.filter((row) => row.duplicate),
+    errorRows: rows.filter((row) => row.error)
+  }
+}
+
+function parseCsvRows(text) {
+  const source = String(text || '').replace(/^\uFEFF/, '')
+  const rows = []
+  let row = []
+  let field = ''
+  let quoted = false
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    const next = source[index + 1]
+
+    if (char === '"') {
+      if (quoted && next === '"') {
+        field += '"'
+        index += 1
+      } else {
+        quoted = !quoted
+      }
+      continue
+    }
+
+    if (char === ',' && !quoted) {
+      row.push(field)
+      field = ''
+      continue
+    }
+
+    if ((char === '\n' || char === '\r') && !quoted) {
+      row.push(field)
+      field = ''
+      if (row.some((cell) => String(cell).trim())) rows.push(row)
+      row = []
+      if (char === '\r' && next === '\n') index += 1
+      continue
+    }
+
+    field += char
+  }
+
+  row.push(field)
+  if (row.some((cell) => String(cell).trim())) rows.push(row)
+  if (rows.length < 2) return []
+
+  const headers = rows[0].map(normalizeImportHeader)
+  return rows.slice(1).map((cells) => {
+    const result = {}
+    headers.forEach((header, index) => {
+      if (!header) return
+      result[header] = String(cells[index] ?? '').trim()
+    })
+    return result
+  })
+}
+
+function normalizeV1CsvRow(rawRow, index, options) {
+  const fallbackCity = String(options.fallbackCity || '').trim()
+  const city = getMappedValue(rawRow, ['city', 'ciudad']) || fallbackCity
+  const fallbackDate = options.fallbackDate || todayInputValue()
+  const total = parseImportAmount(getMappedValue(rawRow, ['total', 'amount', 'venta_total', 'importe', 'monto']))
+  const createdAt = parseV1ImportDate(rawRow, fallbackDate)
+  const originalId = getMappedValue(rawRow, ['id', 'local_id', 'original_source_id', 'sale_id'])
+  const folio = getMappedValue(rawRow, ['folio', 'ticket', 'sale_folio']) || fallbackV1Folio(city, index)
+  const customerWhatsapp = sanitizeImportPhone(getMappedValue(rawRow, ['customer_whatsapp', 'customer_phone', 'phone', 'celular', 'telefono', 'whatsapp']))
+  const row = {
+    index,
+    id: originalId,
+    local_id: getMappedValue(rawRow, ['local_id']),
+    originalSourceId: originalId,
+    folio,
+    city,
+    cashierId: getMappedValue(rawRow, ['cashier_id']),
+    cashierName: getMappedValue(rawRow, ['cashier_name', 'cajera', 'cajero']) || 'Import V1',
+    createdAt,
+    createdAtLabel: createdAt ? new Date(createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Fecha fallback',
+    total,
+    paymentMethod: getMappedValue(rawRow, ['payment_method', 'metodo_pago', 'metodo', 'payment', 'forma_pago']) || 'Sin metodo',
+    customerName: getMappedValue(rawRow, ['customer_name', 'cliente', 'nombre']),
+    customerWhatsapp,
+    customerType: getMappedValue(rawRow, ['customer_type', 'tipo_cliente']),
+    importedPartial: true,
+    source: 'v1_import',
+    importNotes: 'Imported from V1 sales CSV without sale_items',
+    statusLabel: 'Lista',
+    warning: 'Venta parcial'
+  }
+
+  if (!city) return { ...row, error: 'Falta ciudad', statusLabel: 'Error', warning: 'Asigna ciudad fallback' }
+  if (!Number.isFinite(total) || total <= 0) return { ...row, error: 'Total invalido', statusLabel: 'Error', warning: 'Revisa total' }
+  if (!createdAt) return { ...row, error: 'Fecha invalida', statusLabel: 'Error', warning: 'Asigna fecha fallback' }
+
+  return row
+}
+
+function getMappedValue(row, aliases) {
+  for (const alias of aliases) {
+    const key = normalizeImportHeader(alias)
+    if (row[key] !== undefined && String(row[key]).trim() !== '') return String(row[key]).trim()
+  }
+  return ''
+}
+
+function normalizeImportHeader(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s./-]+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+}
+
+function parseImportAmount(value) {
+  const text = String(value || '').trim()
+  if (!text) return 0
+  const cleaned = text.replace(/[^\d.,-]/g, '')
+  const normalized = cleaned.includes(',') && !cleaned.includes('.') ? cleaned.replace(',', '.') : cleaned.replace(/,/g, '')
+  return Number(normalized)
+}
+
+function parseV1ImportDate(row, fallbackDate) {
+  const createdAt = getMappedValue(row, ['created_at'])
+  const saleDate = getMappedValue(row, ['sale_date', 'date', 'fecha', 'fecha_venta'])
+  const saleTime = getMappedValue(row, ['sale_time', 'time', 'hora'])
+  const value = createdAt || [saleDate || fallbackDate, saleTime].filter(Boolean).join('T') || `${fallbackDate}T12:00:00`
+  const parsed = parseFlexibleDate(value)
+  if (parsed) return parsed.toISOString()
+  const fallback = parseFlexibleDate(`${fallbackDate}T12:00:00`)
+  return fallback ? fallback.toISOString() : ''
+}
+
+function parseFlexibleDate(value) {
+  const text = String(value || '').trim().replace('T', ' ')
+  if (!text) return null
+
+  const direct = new Date(text)
+  if (!Number.isNaN(direct.getTime())) return direct
+
+  const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
+  if (!match) return null
+
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const rawYear = Number(match[3])
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear
+  const hours = Number(match[4] || 12)
+  const minutes = Number(match[5] || 0)
+  const seconds = Number(match[6] || 0)
+  const date = new Date(year, month - 1, day, hours, minutes, seconds)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function fallbackV1Folio(city, index) {
+  return `V1-${cityImportPrefix(city)}-${String(index).padStart(4, '0')}`
+}
+
+function cityImportPrefix(city) {
+  const normalized = normalizeImportText(city)
+  if (normalized.includes('rioverde')) return 'RIO'
+  if (normalized.includes('matehuala')) return 'MAT'
+  if (normalized.includes('san luis potosi') || normalized === 'slp') return 'SLP'
+  return String(city || 'V1').trim().slice(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'V1'
+}
+
+function importDuplicateKey(sale) {
+  const date = sale.createdAt || sale.created_at
+  const dateKey = date ? new Date(date).toISOString().slice(0, 10) : ''
+  const total = Number(sale.total || 0).toFixed(2)
+  const customer = sanitizeImportPhone(sale.customerWhatsapp || sale.customer_whatsapp || sale.customer_phone) || normalizeImportText(sale.customerName || sale.customer_name) || 'sin-cliente'
+  const city = normalizeImportText(sale.city)
+  return dateKey && total !== '0.00' ? `${dateKey}|${city}|${total}|${customer}` : ''
+}
+
+function sanitizeImportPhone(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function normalizeImportText(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 function buildExpenseCsvRows(expenses) {
@@ -1871,6 +2215,10 @@ function saleStatusLabel(sale) {
   if (isCancelledSale(sale)) return 'Cancelada'
   if (sale.pendingSync) return 'Pendiente'
   return 'Sincronizada'
+}
+
+function isPartialImport(sale) {
+  return sale?.source === 'v1_import' || sale?.imported_partial === true || sale?.imported_partial === 'true'
 }
 
 function formatDecimal(value) {

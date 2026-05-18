@@ -88,6 +88,11 @@ alter table public.cash_cuts add column if not exists difference numeric(12, 2) 
 alter table public.cash_cuts add column if not exists notes text;
 
 alter table public.sales add column if not exists discount numeric(12, 2) not null default 0;
+alter table public.sales add column if not exists source text;
+alter table public.sales add column if not exists imported_partial boolean not null default false;
+alter table public.sales add column if not exists original_source_id text;
+alter table public.sales add column if not exists imported_at timestamptz;
+alter table public.sales add column if not exists import_notes text;
 
 create table if not exists public.purchase_lots (
   id uuid primary key default gen_random_uuid(),
@@ -152,6 +157,8 @@ alter table public.sale_items add column if not exists estimated_profit numeric(
 
 create index if not exists sales_folio_idx on public.sales (folio);
 create index if not exists sales_city_created_at_idx on public.sales (city, created_at desc);
+create index if not exists sales_source_idx on public.sales (source);
+create index if not exists sales_original_source_id_idx on public.sales (original_source_id);
 create index if not exists sale_items_sale_id_idx on public.sale_items (sale_id);
 create index if not exists sale_items_category_idx on public.sale_items (category);
 create index if not exists sale_items_code_detected_idx on public.sale_items (code_detected);

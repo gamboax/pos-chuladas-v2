@@ -4,9 +4,9 @@ const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
 const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
 const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
-const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id']
+const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id', 'source', 'imported_partial', 'original_source_id', 'imported_at', 'import_notes', 'created_at']
 const OPTIONAL_SALE_ITEM_COLUMNS = ['line_total']
-const OPTIONAL_SALE_SELECT_COLUMNS = ['status', 'cancellation_reason', 'cancel_reason', 'canceled_reason', 'audit_notes', 'ticket_sent_at']
+const OPTIONAL_SALE_SELECT_COLUMNS = ['status', 'cancellation_reason', 'cancel_reason', 'canceled_reason', 'audit_notes', 'ticket_sent_at', 'source', 'imported_partial', 'original_source_id', 'imported_at', 'import_notes']
 const OPTIONAL_PURCHASE_LOT_COLUMNS = ['name', 'purchase_place', 'purchase_date', 'total_investment', 'notes', 'total_cost']
 const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['product_code_id', 'code', 'quantity_purchased', 'quantity', 'suggested_price', 'total_cost']
 
@@ -496,6 +496,47 @@ export async function createPurchaseLotItem(item) {
   return savePurchaseLotItem(item)
 }
 
+export async function importPartialV1Sales(sales) {
+  requireSupabase('importar ventas V1')
+
+  const imported = []
+  const duplicated = []
+  const errors = []
+
+  for (const sale of sales) {
+    try {
+      const normalized = normalizeV1ImportSale(sale)
+      const duplicate = await findV1DuplicateSale(normalized)
+
+      if (duplicate) {
+        duplicated.push({ sale: normalized, duplicate })
+        continue
+      }
+
+      const result = await insertSaleWithCompatibleColumns(buildV1ImportPayload(normalized), ['source', 'imported_partial', 'import_notes'])
+
+      if (result.localFallback) {
+        throw new Error(result.reason)
+      }
+
+      if (result.error) {
+        throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo importar venta.')
+      }
+
+      imported.push(result.data)
+    } catch (error) {
+      errors.push({ sale, error: error.message || 'No se pudo importar venta.' })
+    }
+  }
+
+  return {
+    imported,
+    duplicated,
+    errors,
+    partial: sales.length
+  }
+}
+
 function requireSupabase(action) {
   if (!hasSupabaseConfig || !supabase) {
     throw new Error(`Supabase no esta configurado para ${action}.`)
@@ -503,7 +544,7 @@ function requireSupabase(action) {
 }
 
 function buildSalePayload(sale) {
-  return {
+  const payload = {
     city: sale.city,
     folio: sale.folio,
     cashier_id: sale.cashierId || null,
@@ -520,11 +561,135 @@ function buildSalePayload(sale) {
     customer_name: sale.customerName || null,
     customer_whatsapp: sale.customerWhatsapp || null,
     customer_type: sale.customerType || null,
-    status: 'completed'
+    status: 'completed',
+    source: sale.source || null,
+    imported_partial: Boolean(sale.importedPartial),
+    original_source_id: sale.originalSourceId || null,
+    imported_at: sale.importedAt || null,
+    import_notes: sale.importNotes || null
+  }
+
+  if (sale.createdAt) payload.created_at = sale.createdAt
+
+  return payload
+}
+
+function normalizeV1ImportSale(sale) {
+  const total = Number(sale.total || 0)
+  const createdAt = normalizeImportDate(sale.createdAt || sale.created_at || sale.date || sale.fecha)
+
+  if (!sale.city?.trim()) throw new Error('Falta ciudad para una venta V1.')
+  if (!sale.folio?.trim()) throw new Error('Falta folio para una venta V1.')
+  if (!Number.isFinite(total) || total <= 0) throw new Error(`Total invalido en ${sale.folio || 'venta V1'}.`)
+
+  return {
+    city: sale.city.trim(),
+    folio: sale.folio.trim(),
+    cashierId: sale.cashierId || sale.cashier_id || null,
+    cashierName: sale.cashierName || sale.cashier_name || 'Import V1',
+    subtotal: total,
+    discountPercent: 0,
+    discountAmount: 0,
+    total,
+    paymentMethod: sale.paymentMethod || sale.payment_method || 'Sin metodo',
+    customerName: sale.customerName || sale.customer_name || '',
+    customerWhatsapp: sale.customerWhatsapp || sale.customer_whatsapp || sale.customerPhone || '',
+    customerType: sale.customerType || sale.customer_type || '',
+    source: 'v1_import',
+    importedPartial: true,
+    originalSourceId: sale.originalSourceId || sale.original_source_id || sale.id || sale.local_id || null,
+    importedAt: new Date().toISOString(),
+    importNotes: 'Imported from V1 sales CSV without sale_items',
+    createdAt
   }
 }
 
-async function insertSaleWithCompatibleColumns(payload) {
+function buildV1ImportPayload(sale) {
+  return {
+    city: sale.city,
+    folio: sale.folio,
+    cashier_id: sale.cashierId || null,
+    cashier_name: sale.cashierName,
+    operator_name: sale.cashierName,
+    local_sale_id: sale.originalSourceId || sale.folio,
+    device_session_id: getDeviceSessionId(),
+    subtotal: sale.subtotal,
+    discount_percent: 0,
+    discount_amount: 0,
+    discount: 0,
+    total: sale.total,
+    payment_method: sale.paymentMethod,
+    customer_name: sale.customerName || null,
+    customer_whatsapp: sale.customerWhatsapp || null,
+    customer_type: sale.customerType || null,
+    status: 'completed',
+    source: 'v1_import',
+    imported_partial: true,
+    original_source_id: sale.originalSourceId || null,
+    imported_at: sale.importedAt,
+    import_notes: sale.importNotes,
+    created_at: sale.createdAt
+  }
+}
+
+async function findV1DuplicateSale(sale) {
+  const byFolio = await findSaleByFolio(sale.folio)
+  if (byFolio.data) return { reason: 'folio', sale: byFolio.data }
+
+  const createdAt = new Date(sale.createdAt)
+  if (Number.isNaN(createdAt.getTime())) return null
+  const start = new Date(createdAt)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+
+  let optionalColumns = ['customer_whatsapp', 'customer_name']
+
+  while (true) {
+    let query = supabase
+      .from('sales')
+      .select(['id', 'folio', 'city', 'total', 'created_at', ...optionalColumns].join(', '))
+      .gte('created_at', start.toISOString())
+      .lt('created_at', end.toISOString())
+      .eq('total', sale.total)
+
+    if (sale.city) query = query.ilike('city', sale.city)
+
+    const { data, error } = await query.limit(20)
+
+    if (!error) {
+      const duplicate = (data || []).find((row) => sameImportCustomer(row, sale))
+      return duplicate ? { reason: 'fecha_total_cliente', sale: duplicate } : null
+    }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+    if (missingColumn) {
+      optionalColumns = optionalColumns.filter((column) => column !== missingColumn)
+      continue
+    }
+
+    if (!isMissingSchemaError(error)) logSupabaseError('[Supabase V1 import] duplicate lookup failed:', error)
+    return null
+  }
+}
+
+function sameImportCustomer(row, sale) {
+  const rowPhone = digitsOnly(row.customer_whatsapp)
+  const salePhone = digitsOnly(sale.customerWhatsapp)
+  if (rowPhone || salePhone) return rowPhone === salePhone
+  const rowName = normalizeText(row.customer_name)
+  const saleName = normalizeText(sale.customerName)
+  if (rowName || saleName) return rowName === saleName
+  return true
+}
+
+function normalizeImportDate(value) {
+  const date = value ? new Date(value) : new Date()
+  if (Number.isNaN(date.getTime())) return new Date().toISOString()
+  return date.toISOString()
+}
+
+async function insertSaleWithCompatibleColumns(payload, requiredColumns = []) {
   let nextPayload = { ...payload }
 
   for (let attempt = 0; attempt <= OPTIONAL_SALE_COLUMNS.length; attempt += 1) {
@@ -553,6 +718,12 @@ async function insertSaleWithCompatibleColumns(payload) {
     }
 
     const missingColumn = OPTIONAL_SALE_COLUMNS.find((column) => mentionsColumn(error, column))
+
+    if (missingColumn && requiredColumns.includes(missingColumn)) {
+      return {
+        error: new Error(`Falta la columna sales.${missingColumn}. Ejecuta el ALTER puntual antes de importar V1.`)
+      }
+    }
 
     if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
       nextPayload = { ...nextPayload }
@@ -1065,6 +1236,14 @@ function itemSubtotal(item) {
 
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase()
+}
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 function buildAdminDataReason(expensesError, cashCutsError, saleItemsError) {
