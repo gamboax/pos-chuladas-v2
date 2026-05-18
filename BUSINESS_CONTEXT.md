@@ -229,3 +229,40 @@ El corte debe mostrar diferencia clara:
 
 Los codigos de producto deben ser unicos. Si un codigo ya existe, se debe mostrar error claro y no crear duplicado.
 Una venta con `code_detected` debe intentar enlazarse a product_codes/purchase_lot_items sin romper la venta si no encuentra codigo.
+
+---
+
+# MVP PARA EVENTOS REALES
+
+## Flujo operativo recomendado
+
+La cajera debe quedarse en caja y usar el camino mas rapido:
+- categoria manual si la etiqueta no se lee
+- scanner IA si hay varias etiquetas visibles
+- ver venta solo para corregir
+- totalizar y guardar
+
+El scanner IA no reemplaza la caja manual. Es una ayuda para acelerar capturas cuando la foto es legible.
+
+## Roles definitivos del MVP
+
+- cashier: caja y resumen del dia; no ve gastos, costos, inventario ni utilidad.
+- manager/admin_operativo/admin: caja, dashboard operativo, tickets, gastos y corte.
+- super_admin: acceso completo, auditoria, exportaciones, inventario/lotes y cancelaciones.
+- investor: solo lectura ejecutiva, sin botones de operacion.
+
+## Reglas de datos
+
+- Cada venta debe tener folio unico.
+- `sale_items` debe guardar el `sale_id` de la venta.
+- Ventas canceladas no deben contar en totales normales.
+- Pendientes locales no se deben perder si falla internet.
+- Al cambiar ciudad/evento no se deben mezclar metricas.
+
+## Seguridad MVP
+
+El sistema esta pensado para operacion interna. Mientras exista login simple y anon key publica:
+- no publicar credenciales privadas
+- no guardar imagenes enviadas a IA
+- no mostrar secretos en errores
+- no abrir el POS a usuarios externos sin migrar a auth real y policies por rol

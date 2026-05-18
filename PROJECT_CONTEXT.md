@@ -244,13 +244,57 @@ Tablas importantes:
 
 ---
 
+# CIERRE MVP OPERATIVO
+
+## Estado actual
+
+El MVP esta preparado para operar eventos reales con foco en caja movil:
+- caja rapida mobile-first
+- captura manual por categoria
+- scanner con camara e IA visual bajo demanda
+- venta editable
+- checkout con descuento, pago y cliente opcional
+- guardado en Supabase con fallback local pendiente
+- ticket y WhatsApp
+- dashboard operativo por rol
+- gastos, cortes, inventario/lotes y exportaciones basicas
+
+## Performance
+
+- Login carga solo la pantalla de login.
+- Caja y dashboard se cargan con lazy loading.
+- Scanner se carga solo al tocar Escanear articulos.
+- La IA del scanner solo se ejecuta despues de Tomar foto.
+- Tesseract/OCR local no forma parte del flujo visible del scanner MVP.
+- Service worker usa cache versionada y red primero para navegacion/assets.
+
+## Riesgos conocidos
+
+- El login actual es simple por tabla `users`, no autenticacion Supabase Auth completa.
+- RLS esta habilitado en SQL, pero las policies actuales son amplias para mantener operacion con anon key.
+- Las ventas pendientes viven en localStorage del dispositivo hasta sincronizar.
+- La IA visual no debe ser obligatoria para vender; siempre debe existir captura manual.
+
+## Regla de cierre
+
+Antes de cada evento:
+- correr `npm run lint`
+- correr `npm run build`
+- confirmar ciudad activa
+- probar una venta manual
+- probar scanner/camara
+- revisar pendientes
+- verificar que dashboard no mezcle ciudades
+
+---
+
 # FUNCIONES YA IMPLEMENTADAS
 
 - login
 - roles
 - caja mobile-first
 - captura manual
-- scanner simulado
+- scanner con camara e IA visual
 - carrito editable
 - checkout
 - WhatsApp

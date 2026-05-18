@@ -294,3 +294,45 @@ Evitar alerts feos. Mostrar mensajes visuales cortos dentro de la app:
 
 Dashboard, scanner, checkout y venta deben evitar overflow horizontal en 360px, 390px, 414px y 430px.
 Usar cards compactas, detalle progresivo y botones tactiles.
+
+---
+
+# SCANNER MVP
+
+El scanner debe sentirse como un flujo simple:
+- abrir scanner
+- camara lista
+- Tomar foto
+- Analizando productos
+- revisar sugerencias
+- Confirmar articulos
+
+No mostrar lenguaje tecnico al operador:
+- OCR
+- tokens
+- region
+- crop
+- modelo
+- API
+
+Si la lectura falla, mostrar acciones simples:
+- Tomar otra foto
+- Capturar manual
+
+La IA no debe analizar en vivo. Solo se ejecuta despues de Tomar foto.
+
+---
+
+# PERFORMANCE UX
+
+La caja debe sentirse inmediata:
+- no cargar dashboard al entrar a caja
+- no cargar scanner hasta usarlo
+- no bloquear la app mientras analiza una foto
+- apagar camara al salir o confirmar articulos
+- liberar imagenes capturadas cuando ya no se usan
+
+Cuando algo tarda:
+- mostrar loading corto y claro
+- permitir cancelar analisis
+- mantener captura manual disponible
