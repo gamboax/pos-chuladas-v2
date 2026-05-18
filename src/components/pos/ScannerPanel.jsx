@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
@@ -7,19 +7,78 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
+  const inputRef = useRef(null)
+  const activeSubmitRef = useRef('')
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
   const [capturedImage, setCapturedImage] = useState('')
   const [codeInput, setCodeInput] = useState('')
-  const [assistMessage, setAssistMessage] = useState('Toma una foto y escribe el codigo visible, por ejemplo A2.')
+  const [assistMessage, setAssistMessage] = useState('Toma foto y escribe codigo. Ej. A2 o A2-30.')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
+  const [codeHistory, setCodeHistory] = useState([])
   const canConfirm = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
+  const livePreview = useMemo(() => (codeInput.trim() ? parseProductCode(codeInput) : null), [codeInput])
+  const canInterpret = Boolean(capturedImage && codeInput.trim() && !isInterpreting)
 
   useEffect(() => {
     return () => stopCamera(false)
   }, [])
+
+  const submitCode = useCallback(async (rawCode) => {
+    if (!capturedImage || isInterpreting) return false
+
+    const parsed = parseProductCode(rawCode)
+    const submitKey = parsed.ok ? `${parsed.code}-${parsed.parsedPrice || ''}` : ''
+
+    setAssistError('')
+
+    if (!parsed.ok) {
+      setAssistError(parsed.message)
+      return false
+    }
+
+    if (activeSubmitRef.current === submitKey) return false
+    activeSubmitRef.current = submitKey
+    setIsInterpreting(true)
+    setAssistMessage('Buscando precio...')
+
+    const suggestedPrice = await lookupSuggestedPrice(parsed.code)
+    const unitPrice = suggestedPrice || parsed.parsedPrice || 0
+
+    onAddSuggestion({
+      capture_origin: 'scanner',
+      category: parsed.category,
+      material: parsed.material,
+      code_detected: parsed.code,
+      quantity: 1,
+      unitPrice,
+      subtotal: unitPrice
+    })
+
+    setCodeHistory((current) => [
+      { code: parsed.code, label: buildHistoryLabel(parsed, unitPrice), rawCode: parsed.rawCode || parsed.code },
+      ...current.filter((item) => item.code !== parsed.code)
+    ].slice(0, 6))
+    setCodeInput('')
+    setAssistMessage(unitPrice ? `${parsed.code} agregado.` : `${parsed.code} agregado. Falta precio.`)
+    setIsInterpreting(false)
+    activeSubmitRef.current = ''
+    vibrateLight()
+    window.setTimeout(() => inputRef.current?.focus(), 60)
+    return true
+  }, [capturedImage, isInterpreting, onAddSuggestion])
+
+  useEffect(() => {
+    if (!canInterpret || !livePreview?.ok) return undefined
+
+    const timeout = window.setTimeout(() => {
+      submitCode(codeInput)
+    }, livePreview.parsedPrice ? 360 : 460)
+
+    return () => window.clearTimeout(timeout)
+  }, [canInterpret, codeInput, livePreview, submitCode])
 
   async function startCamera() {
     if (streamRef.current) {
@@ -111,39 +170,8 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     setCapturedImage(canvas.toDataURL('image/jpeg', 0.86))
     setCameraError('')
     setCameraMessage('Captura tomada. Listo para revisar.')
-    setAssistMessage('Escribe el codigo detectado y toca Interpretar codigo.')
-  }
-
-  async function interpretCode() {
-    if (!capturedImage || isInterpreting) return
-
-    const parsed = parseProductCode(codeInput)
-
-    setAssistError('')
-
-    if (!parsed.ok) {
-      setAssistError(parsed.message)
-      return
-    }
-
-    setIsInterpreting(true)
-    setAssistMessage('Buscando precio sugerido...')
-
-    const suggestedPrice = await lookupSuggestedPrice(parsed.code)
-
-    onAddSuggestion({
-      capture_origin: 'scanner',
-      category: parsed.category,
-      material: parsed.material,
-      code_detected: parsed.code,
-      quantity: 1,
-      unitPrice: suggestedPrice || 0,
-      subtotal: suggestedPrice || 0
-    })
-
-    setCodeInput('')
-    setAssistMessage(suggestedPrice ? `${parsed.code} interpretado con precio sugerido.` : `${parsed.code} interpretado. Captura el precio para confirmar.`)
-    setIsInterpreting(false)
+    setAssistMessage('Escribe codigo. Se interpreta solo.')
+    window.setTimeout(() => inputRef.current?.focus(), 90)
   }
 
   function goBack() {
@@ -200,23 +228,51 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
                 <span>{capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
               <TextInput
+                ref={inputRef}
                 value={codeInput}
                 onChange={(event) => setCodeInput(event.target.value.toUpperCase())}
-                onKeyDown={(event) => event.key === 'Enter' && interpretCode()}
-                placeholder="Codigo: A2, E1, CAJA..."
+                onKeyDown={(event) => event.key === 'Enter' && submitCode(codeInput)}
+                placeholder="A2, A2-30, COD-A2..."
                 disabled={!capturedImage || isInterpreting}
                 style={styles.codeInput}
               />
+              {livePreview?.ok && (
+                <div style={styles.previewPill}>
+                  {livePreview.code} / {livePreview.category}{livePreview.material ? ` / ${livePreview.material}` : ''}{livePreview.parsedPrice ? ` / $${livePreview.parsedPrice}` : ''}
+                </div>
+              )}
               <button
                 type="button"
-                style={{ ...styles.interpretButton, opacity: capturedImage && codeInput.trim() && !isInterpreting ? 1 : 0.45 }}
-                disabled={!capturedImage || !codeInput.trim() || isInterpreting}
-                onClick={interpretCode}
+                style={{ ...styles.interpretButton, opacity: canInterpret ? 1 : 0.45 }}
+                disabled={!canInterpret}
+                onClick={() => submitCode(codeInput)}
               >
-                {isInterpreting ? 'Interpretando...' : 'Interpretar codigo'}
+                {isInterpreting ? 'Agregando...' : 'Interpretar'}
               </button>
               {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
             </section>
+
+            {codeHistory.length > 0 && (
+              <section style={styles.historyBox}>
+                <div style={styles.detectedHeader}>
+                  <strong>Recientes</strong>
+                  <span>Toca para repetir</span>
+                </div>
+                <div style={styles.historyGrid}>
+                  {codeHistory.map((entry) => (
+                    <button
+                      type="button"
+                      key={entry.code}
+                      disabled={!capturedImage || isInterpreting}
+                      style={styles.historyButton}
+                      onClick={() => submitCode(entry.rawCode)}
+                    >
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <div style={styles.detectedHeader}>
               <strong>Articulos sugeridos</strong>
@@ -259,6 +315,16 @@ function cameraErrorMessage(error) {
   }
 
   return 'No se pudo iniciar la camara. Puedes seguir agregando articulos manualmente.'
+}
+
+function buildHistoryLabel(parsed, unitPrice) {
+  return `${parsed.code}${unitPrice ? ` $${unitPrice}` : ''}`
+}
+
+function vibrateLight() {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+    navigator.vibrate(12)
+  }
 }
 
 const styles = {
@@ -405,9 +471,52 @@ const styles = {
     maxWidth: '100%',
     boxSizing: 'border-box'
   },
+  historyBox: {
+    border: '1px solid #e4e4e4',
+    borderRadius: 22,
+    background: '#ffffff',
+    padding: 12,
+    display: 'grid',
+    gap: 10,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
+  },
+  historyGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  historyButton: {
+    minHeight: 42,
+    border: '1px solid #111111',
+    borderRadius: 999,
+    background: '#ffffff',
+    color: '#111111',
+    padding: '0 13px',
+    fontSize: 13,
+    fontWeight: 720,
+    boxSizing: 'border-box',
+    maxWidth: '100%'
+  },
   codeInput: {
     minHeight: 54,
     textTransform: 'uppercase'
+  },
+  previewPill: {
+    border: '1px solid #0EA371',
+    borderRadius: 18,
+    background: '#DFF8EC',
+    color: '#064E3B',
+    padding: '10px 12px',
+    fontSize: 14,
+    fontWeight: 760,
+    lineHeight: 1.25,
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    overflowWrap: 'anywhere'
   },
   interpretButton: {
     width: '100%',
