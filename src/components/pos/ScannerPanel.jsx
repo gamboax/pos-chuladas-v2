@@ -4,12 +4,14 @@ import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
 
-export default function ScannerPanel({ city, folio, items, onBack, onChange, onAddSuggestion, onRemove, onConfirm }) {
+export default function ScannerPanel({ city, folio, items, onBack, onCheckout, onChange, onAddSuggestion, onRemove, onConfirm }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const inputRef = useRef(null)
   const activeSubmitRef = useRef('')
+  const autoStartRef = useRef(false)
+  const startCameraRef = useRef(null)
   const captureRunRef = useRef(0)
   const aiAbortRef = useRef(null)
   const capturedImageUrlRef = useRef('')
@@ -18,13 +20,14 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   const [cameraError, setCameraError] = useState('')
   const [capturedImage, setCapturedImage] = useState('')
   const [codeInput, setCodeInput] = useState('')
-  const [assistMessage, setAssistMessage] = useState('Toma foto y analiza con IA para sugerir productos.')
+  const [assistMessage, setAssistMessage] = useState('Toma foto para sugerir productos.')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false)
   const [showManualFallback, setShowManualFallback] = useState(false)
   const [detectedCodes, setDetectedCodes] = useState([])
   const [codeHistory, setCodeHistory] = useState([])
+  const [confirmedCount, setConfirmedCount] = useState(0)
   const canConfirm = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
   const livePreview = useMemo(() => (codeInput.trim() ? parseProductCode(codeInput) : null), [codeInput])
   const canInterpret = Boolean(capturedImage && codeInput.trim() && !isInterpreting)
@@ -36,6 +39,16 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       stopCamera(false)
       revokeCapturedImage()
     }
+  }, [])
+
+  useEffect(() => {
+    startCameraRef.current = startCamera
+  })
+
+  useEffect(() => {
+    if (autoStartRef.current) return
+    autoStartRef.current = true
+    startCameraRef.current?.()
   }, [])
 
   const addDetectedCode = useCallback(async (parsed, options = {}) => {
@@ -104,9 +117,9 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     return () => window.clearTimeout(timeout)
   }, [canInterpret, codeInput, livePreview, submitCode])
 
-  async function analyzeWithAi() {
+  async function analyzeWithAi(runId = captureRunRef.current) {
     const canvas = canvasRef.current
-    if (!canvas || !capturedImage || isAiAnalyzing) return
+    if (!canvas || isAiAnalyzing) return
 
     cancelAiAnalysis()
     const controller = new AbortController()
@@ -115,11 +128,12 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     setIsAiAnalyzing(true)
     setShowManualFallback(false)
     setAssistError('')
-    setCameraMessage('Analizando con IA...')
-    setAssistMessage('Leyendo etiquetas...')
+    setCameraMessage('Analizando productos...')
+    setAssistMessage('Analizando productos...')
 
     try {
       const image = createAiLabelImage(canvas)
+      if (runId !== captureRunRef.current) return
       const response = await fetch('/api/analyze-label', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,9 +141,10 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
         signal: controller.signal
       })
       const payload = await response.json().catch(() => ({}))
+      if (runId !== captureRunRef.current) return
 
       if (!response.ok) {
-        throw new Error(payload.message || 'No pude leerlo bien, corrige manualmente.')
+        throw new Error('No pude leer la foto. Intenta otra o captura manual.')
       }
 
       const suggested = normalizeAiItems(payload.items || [])
@@ -137,7 +152,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
 
       if (!suggested.length) {
         setShowManualFallback(true)
-        setAssistMessage(payload.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
+        setAssistMessage('No pude leer la foto. Intenta otra o captura manual.')
         setCameraMessage('Sin sugerencias claras. Captura manual disponible.')
         return
       }
@@ -149,7 +164,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
         await addDetectedCode(parsed, { silent: true })
       }
 
-      setAssistMessage(`${suggested.length} sugerencia(s) detectada(s). Revisa antes de confirmar.`)
+      setAssistMessage(`${suggested.length} sugerencia(s) detectada(s). Revisa articulos antes de confirmar.`)
       setCameraMessage('Sugerencias detectadas. Revisa precios.')
       setShowManualFallback(false)
       vibrateLight()
@@ -159,7 +174,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
         setCameraMessage('Analisis cancelado.')
       } else {
         setShowManualFallback(true)
-        setAssistMessage(error.message || 'No pude leer la foto. Intenta otra captura o captura manual.')
+        setAssistMessage(error.message || 'No pude leer la foto. Intenta otra o captura manual.')
         setCameraMessage('No pude leer la foto. Captura manual disponible.')
       }
     } finally {
@@ -174,6 +189,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     if (streamRef.current) {
       captureRunRef.current += 1
       cancelAiAnalysis()
+      setConfirmedCount(0)
       clearCapturedImage()
       setDetectedCodes([])
       setShowManualFallback(false)
@@ -184,6 +200,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     }
 
     setCameraError('')
+    setConfirmedCount(0)
     clearCapturedImage()
     setDetectedCodes([])
     setShowManualFallback(false)
@@ -227,6 +244,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
   async function repeatCapture() {
     captureRunRef.current += 1
     cancelAiAnalysis()
+    setConfirmedCount(0)
     clearCapturedImage()
     setCameraError('')
     setDetectedCodes([])
@@ -269,7 +287,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
     const canvas = canvasRef.current
 
     if (!video || !canvas || !streamRef.current) {
-      setCameraError('Activa la camara antes de tomar captura.')
+      setCameraError('Activa la camara antes de tomar foto.')
       return
     }
 
@@ -287,12 +305,37 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       const previewUrl = URL.createObjectURL(blob)
       capturedImageUrlRef.current = previewUrl
       setCapturedImage(previewUrl)
+      analyzeWithAi(runId)
     }, 'image/jpeg', 0.86)
     setCameraError('')
     setShowManualFallback(false)
-    setCameraMessage('Captura tomada. Lista para analizar.')
-    setAssistMessage('Toca Analizar con IA para leer etiquetas.')
+    setConfirmedCount(0)
+    setCameraMessage('Analizando productos...')
+    setAssistMessage('Analizando productos...')
     window.setTimeout(() => inputRef.current?.focus(), 90)
+  }
+
+  function confirmArticles() {
+    const count = items.filter((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0).length
+    if (!count) return
+
+    const confirmed = onConfirm?.()
+    if (confirmed === false) return
+
+    setConfirmedCount(count)
+    setCameraMessage(`${count} articulo(s) agregados al carrito.`)
+    setAssistMessage('Articulos agregados. Elige el siguiente paso.')
+    setDetectedCodes([])
+    setShowManualFallback(false)
+    setCodeInput('')
+  }
+
+  async function scanMore() {
+    setConfirmedCount(0)
+    setDetectedCodes([])
+    setShowManualFallback(false)
+    setAssistError('')
+    await repeatCapture()
   }
 
   function goBack() {
@@ -315,6 +358,26 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
       <Panel style={styles.panelOuter}>
         <div style={styles.panelInner}>
           <Stack style={styles.stack}>
+            {confirmedCount > 0 ? (
+              <>
+                <section style={styles.doneBox}>
+                  <strong>{confirmedCount} articulo(s) en carrito</strong>
+                  <Muted>Listo. Puedes seguir escaneando o cerrar la venta.</Muted>
+                </section>
+                <div style={styles.postConfirmActions}>
+                  <button type="button" style={styles.cameraButton} onClick={onBack}>
+                    Volver a caja
+                  </button>
+                  <button type="button" style={styles.captureButton} onClick={onCheckout}>
+                    Ir a totalizar
+                  </button>
+                  <button type="button" style={styles.retakeButton} onClick={scanMore}>
+                    Escanear mas
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
             <div style={styles.cameraBox}>
               {capturedImage ? (
                 <img src={capturedImage} alt="Captura tomada" style={styles.previewImage} />
@@ -339,16 +402,13 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
               <button type="button" style={styles.cameraButton} onClick={startCamera} disabled={cameraActive && !capturedImage}>
                 {cameraActive && !capturedImage ? 'Camara activa' : 'Activar camara'}
               </button>
-              <button type="button" style={styles.captureButton} onClick={captureFrame} disabled={!cameraActive || Boolean(capturedImage)}>
-                Tomar captura
+              <button type="button" style={styles.captureButton} onClick={captureFrame} disabled={!cameraActive || Boolean(capturedImage) || isAiAnalyzing}>
+                {isAiAnalyzing ? 'Analizando...' : 'Tomar foto'}
               </button>
             </div>
 
             {capturedImage && (
               <div style={styles.primaryScanActions}>
-                <button type="button" style={styles.aiButton} disabled={isAiAnalyzing} onClick={analyzeWithAi}>
-                  {isAiAnalyzing ? 'Analizando con IA...' : 'Analizar con IA'}
-                </button>
                 {isAiAnalyzing && (
                   <button type="button" style={styles.aiCancelButton} onClick={cancelAiAnalysis}>
                     Cancelar
@@ -365,9 +425,9 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
             <section style={styles.assistBox}>
               <div style={styles.detectedHeader}>
                 <strong>Sugerencias</strong>
-                <span>{isAiAnalyzing ? 'Analizando...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
+                <span>{isAiAnalyzing ? 'Analizando...' : capturedImage ? 'Revisar articulos' : 'Toma foto primero'}</span>
               </div>
-              {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando con IA...</div>}
+              {isAiAnalyzing && <div style={styles.ocrStatus}>Analizando productos...</div>}
               {detectedCodes.length > 0 && (
                 <div style={styles.ocrCodes}>
                   <span>Sugerencias detectadas</span>
@@ -412,6 +472,16 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
                 </>
               )}
               {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
+              {showManualFallback && (
+                <div style={styles.manualActions}>
+                  <button type="button" style={styles.cameraButton} onClick={repeatCapture}>
+                    Tomar otra foto
+                  </button>
+                  <button type="button" style={styles.retakeButton} onClick={() => inputRef.current?.focus()}>
+                    Capturar manual
+                  </button>
+                </div>
+              )}
             </section>
 
             {codeHistory.length > 0 && (
@@ -453,9 +523,11 @@ export default function ScannerPanel({ city, folio, items, onBack, onChange, onA
               <div style={styles.assistError}>Agrega precio mayor a $0 antes de confirmar.</div>
             )}
 
-            <PrimaryButton tone="success" disabled={!canConfirm} onClick={onConfirm}>
-              Confirmar y agregar
+            <PrimaryButton tone="success" disabled={!canConfirm || isAiAnalyzing} onClick={confirmArticles}>
+              Confirmar articulos
             </PrimaryButton>
+              </>
+            )}
           </Stack>
         </div>
       </Panel>
@@ -597,6 +669,15 @@ const styles = {
     maxWidth: '100%',
     boxSizing: 'border-box'
   },
+  postConfirmActions: {
+    width: '100%',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 10,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
+  },
   cameraActions: {
     width: '100%',
     display: 'grid',
@@ -658,25 +739,14 @@ const styles = {
     maxWidth: '100%',
     boxSizing: 'border-box'
   },
-  aiActions: {
+  manualActions: {
+    width: '100%',
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
     gap: 8,
     minWidth: 0,
-    maxWidth: '100%'
-  },
-  aiButton: {
-    width: '100%',
-    minHeight: 54,
-    border: '1px solid #0EA371',
-    borderRadius: 19,
-    background: '#10B981',
-    color: '#ffffff',
-    boxSizing: 'border-box',
     maxWidth: '100%',
-    fontSize: 16,
-    fontWeight: 780,
-    boxShadow: '0 12px 22px rgba(16, 185, 129, 0.22)'
+    boxSizing: 'border-box'
   },
   aiCancelButton: {
     width: '100%',
@@ -812,6 +882,18 @@ const styles = {
     textAlign: 'center',
     fontSize: 14,
     fontWeight: 560,
+    boxSizing: 'border-box',
+    maxWidth: '100%'
+  },
+  doneBox: {
+    border: '1px solid #0EA371',
+    borderRadius: 24,
+    background: '#DFF8EC',
+    color: '#064E3B',
+    padding: 18,
+    display: 'grid',
+    gap: 8,
+    textAlign: 'center',
     boxSizing: 'border-box',
     maxWidth: '100%'
   },

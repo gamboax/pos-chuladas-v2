@@ -299,7 +299,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     setScannedItems((current) => current.filter((item) => item.id !== id))
   }
 
-  function confirmScannedItems() {
+  function confirmScannedItems(nextScreen = 'cashier') {
     const itemsToAdd = scannedItems
       .filter((item) => item.quantity > 0 && item.unitPrice > 0)
       .map((item) => ({
@@ -313,12 +313,13 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         subtotal: Number(item.quantity) * Number(item.unitPrice)
       }))
 
-    if (!itemsToAdd.length) return
+    if (!itemsToAdd.length) return false
 
     setCart((current) => [...current, ...itemsToAdd])
     setFeedback(`${itemsToAdd.length} articulo(s) agregados`)
     setScannedItems([])
-    setScreen('cashier')
+    if (nextScreen !== 'scanner') setScreen(nextScreen)
+    return true
   }
 
   function updateCartItem(id, field, value) {
@@ -480,10 +481,11 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
             folio={folio}
             items={scannedItems}
             onBack={() => setScreen('cashier')}
+            onCheckout={() => setScreen('checkout')}
             onChange={updateScannedItem}
             onAddSuggestion={addScannedSuggestion}
             onRemove={removeScannedItem}
-            onConfirm={confirmScannedItems}
+            onConfirm={() => confirmScannedItems('scanner')}
           />
         </Suspense>
       )}
