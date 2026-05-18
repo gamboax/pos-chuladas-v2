@@ -55,9 +55,11 @@ export function parseProductCode(rawCode) {
   }
 }
 
-export function extractProductCodesFromText(rawText) {
+export function extractProductCodesFromText(rawText, options = {}) {
   const normalized = normalizeOcrText(rawText)
-  const candidates = buildOcrCandidates(normalized)
+  const candidates = options.fuzzy
+    ? [...buildOcrCandidates(normalized), ...buildFuzzyCandidates(normalized)]
+    : buildOcrCandidates(normalized)
   const bestByCode = new Map()
 
   candidates.forEach((candidate) => {
@@ -98,15 +100,17 @@ function normalizeOcrText(rawText) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[|]/g, 'I')
+    .replace(/[¿]/g, '?')
+    .replace(/[–—]/g, '-')
     .replace(/[‘’]/g, "'")
     .toUpperCase()
 }
 
 function buildOcrCandidates(text) {
-  const spaced = text.replace(/[^A-Z0-9.]+/g, ' ')
+  const spaced = text.replace(/[$]/g, ' ').replace(/[^A-Z0-9.?-]+/g, ' ')
   const compact = spaced.replace(/\s+/g, '')
   const candidates = []
-  const codePattern = /([APTDIERJC])\s*[-_:.]?\s*([1-4ILZ])(?:\s*[-_:.]?\s*([0-9OILZS]{1,4}(?:[.,][0-9OILZS]{1,2})?))?/g
+  const codePattern = /([APTDIERJC])\s*[-_:.]?\s*([1-4ILZ?])(?:\s*[-_:.]?\s*([0-9OILZS]{1,4}(?:[.,][0-9OILZS]{1,2})?))?/g
   let match = codePattern.exec(spaced)
 
   while (match) {
@@ -116,7 +120,7 @@ function buildOcrCandidates(text) {
     match = codePattern.exec(spaced)
   }
 
-  const compactPattern = /([APTDIERJC])([1-4ILZ])([0-9OILZS]{1,4})?/g
+  const compactPattern = /([APTDIERJC])([1-4ILZ?])([0-9OILZS]{1,4})?/g
   match = compactPattern.exec(compact)
 
   while (match) {
@@ -144,8 +148,41 @@ function buildOcrCandidates(text) {
   return candidates
 }
 
+function buildFuzzyCandidates(text) {
+  const spaced = text.replace(/[$]/g, ' ').replace(/[^A-Z0-9.?-]+/g, ' ')
+  const compact = spaced.replace(/\s+/g, '')
+  const candidates = []
+  const nearCodePattern = /(?:^|[^A-Z])([APTDIERJC])\s*[-_:.]?\s*([?])?(?:\s*[-_:.]?\s*([0-9OILZS]{1,4}))?/g
+  let match = nearCodePattern.exec(spaced)
+
+  while (match) {
+    const letter = match[1]
+    const price = normalizeOcrNumber(match[3])
+    const looksLikeMissingMaterial = Boolean(match[2]) || /[-_:.]\s*$/.test(match[0])
+
+    if (looksLikeMissingMaterial) {
+      candidates.push(`${letter}2${price ? `-${price}` : ''}`)
+      candidates.push(`${letter}3${price ? `-${price}` : ''}`)
+    }
+
+    match = nearCodePattern.exec(spaced)
+  }
+
+  const letterDigitPrice = compact.match(/([APTDIERJC])([OILZS])([0-9OILZS]{1,4})?/)
+  if (letterDigitPrice) {
+    const material = normalizeOcrDigit(letterDigitPrice[2])
+    const price = normalizeOcrNumber(letterDigitPrice[3])
+    if (material && Number(material) >= 1 && Number(material) <= 4) {
+      candidates.push(`${letterDigitPrice[1]}${material}${price ? `-${price}` : ''}`)
+    }
+  }
+
+  return candidates
+}
+
 function normalizeOcrDigit(value) {
   const text = String(value || '').toUpperCase()
+  if (text === '?' || text === '') return ''
   if (text === 'I' || text === 'L') return '1'
   if (text === 'Z') return '2'
   return /^[1-4]$/.test(text) ? text : ''

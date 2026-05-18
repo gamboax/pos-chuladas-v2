@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { preprocessCanvasForOcr, recognizeCodesFromImage } from '../../lib/ocr'
+import { createOcrImageVariants, recognizeCodesFromImage } from '../../lib/ocr'
 import { extractProductCodesFromText, lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
@@ -9,9 +9,10 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const inputRef = useRef(null)
-  const activeSubmitRef = useRef('')
+const activeSubmitRef = useRef('')
   const ocrRunRef = useRef(0)
   const capturedImageUrlRef = useRef('')
+  const [scanRegion, setScanRegion] = useState({ x: 0.24, y: 0.34, width: 0.52, height: 0.28 })
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
@@ -102,24 +103,40 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     return () => window.clearTimeout(timeout)
   }, [canInterpret, codeInput, livePreview, submitCode])
 
-  async function runOcr(preprocessedImage, runId) {
+  async function runOcr(imageVariants, runId) {
     setIsOcrReading(true)
     setOcrDetectedCodes([])
     setOcrText('')
-    setCameraMessage('Leyendo codigos...')
-    setAssistMessage('OCR leyendo captura. Puedes escribir el codigo si tienes prisa.')
+    setCameraMessage('Leyendo etiqueta...')
+    setAssistMessage('Leyendo etiqueta. Puedes escribir el codigo si tienes prisa.')
 
     try {
-      const text = await recognizeCodesFromImage(preprocessedImage)
-      if (ocrRunRef.current !== runId) return
+      const texts = []
+      const detectedByCode = new Map()
 
-      const detected = extractProductCodesFromText(text)
-      setOcrText(text)
+      for (const variant of imageVariants) {
+        if (ocrRunRef.current !== runId) return
+        setCameraMessage(`Leyendo etiqueta (${variant.label})...`)
+        const text = await recognizeCodesFromImage(variant.image, { psm: variant.psm })
+        if (ocrRunRef.current !== runId) return
+        texts.push(text)
+
+        extractProductCodesFromText(text, { fuzzy: true }).forEach((parsed) => {
+          const current = detectedByCode.get(parsed.code)
+          if (!current || (!current.parsedPrice && parsed.parsedPrice)) {
+            detectedByCode.set(parsed.code, parsed)
+          }
+        })
+      }
+
+      const detected = [...detectedByCode.values()]
+      const combinedText = texts.filter(Boolean).join(' / ')
+      setOcrText(combinedText)
       setOcrDetectedCodes(detected)
 
       if (!detected.length) {
-        setAssistMessage('No pude leer codigo. Escribelo manualmente.')
-        setCameraMessage('Captura tomada. Revisa o escribe codigo.')
+        setAssistMessage('No pude leer bien. Corrigelo rapido abajo.')
+        setCameraMessage('Etiqueta dudosa. Revisa o escribe codigo.')
         return
       }
 
@@ -131,12 +148,12 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
         await addDetectedCode(parsed, { silent: true })
       }
 
-      setAssistMessage(`${detected.length} codigo(s) detectado(s). Revisa precios antes de confirmar.`)
-      setCameraMessage('Codigos detectados. Listo para revisar.')
+      setAssistMessage(`${detected.length} posible(s) codigo(s). Revisa precios antes de confirmar.`)
+      setCameraMessage('Posibles codigos detectados. Listo para revisar.')
       vibrateLight()
     } catch {
       if (ocrRunRef.current !== runId) return
-      setAssistMessage('No pude leer codigo. Escribelo manualmente.')
+      setAssistMessage('No pude leer bien. Corrigelo rapido abajo.')
       setCameraMessage('Captura tomada. OCR no disponible.')
     } finally {
       if (ocrRunRef.current === runId) {
@@ -254,7 +271,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     canvas.height = height
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, width, height)
-    const preprocessedImage = preprocessCanvasForOcr(canvas)
+    const ocrVariants = createOcrImageVariants(canvas, scanRegion)
     const runId = ocrRunRef.current + 1
     ocrRunRef.current = runId
     canvas.toBlob((blob) => {
@@ -265,10 +282,43 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
       setCapturedImage(previewUrl)
     }, 'image/jpeg', 0.86)
     setCameraError('')
-    setCameraMessage('Captura tomada. Leyendo codigos...')
-    setAssistMessage('Leyendo codigos...')
+    setCameraMessage('Captura tomada. Leyendo etiqueta...')
+    setAssistMessage('Leyendo etiqueta...')
     window.setTimeout(() => inputRef.current?.focus(), 90)
-    runOcr(preprocessedImage, runId)
+    runOcr(ocrVariants, runId)
+  }
+
+  function reprocessRegion() {
+    const canvas = canvasRef.current
+    if (!canvas || !capturedImage) return
+
+    const runId = ocrRunRef.current + 1
+    ocrRunRef.current = runId
+    setCameraError('')
+    setCameraMessage('Releyendo etiqueta...')
+    setAssistMessage('Releyendo etiqueta con la region ajustada...')
+    runOcr(createOcrImageVariants(canvas, scanRegion), runId)
+  }
+
+  function moveRegion(dx, dy) {
+    setScanRegion((current) => constrainRegion({
+      ...current,
+      x: current.x + dx,
+      y: current.y + dy
+    }))
+  }
+
+  function zoomRegion(delta) {
+    setScanRegion((current) => {
+      const nextWidth = Math.max(0.24, Math.min(0.86, current.width + delta))
+      const nextHeight = Math.max(0.16, Math.min(0.56, current.height + delta * 0.62))
+      return constrainRegion({
+        x: current.x + (current.width - nextWidth) / 2,
+        y: current.y + (current.height - nextHeight) / 2,
+        width: nextWidth,
+        height: nextHeight
+      })
+    })
   }
 
   function goBack() {
@@ -294,7 +344,37 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
                   <Muted>Activa la camara para ver el preview.</Muted>
                 </div>
               )}
+              {(cameraActive || capturedImage) && (
+                <>
+                  <div style={styles.regionShade} />
+                  <div style={regionGuideStyle(scanRegion)}>
+                    <span>Etiqueta</span>
+                  </div>
+                </>
+              )}
             </div>
+
+            {(cameraActive || capturedImage) && (
+              <section style={styles.regionTools}>
+                <div style={styles.detectedHeader}>
+                  <strong>Region OCR</strong>
+                  <span>Acerca el cuadro a la etiqueta</span>
+                </div>
+                <div style={styles.regionGrid}>
+                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0, -0.04)}>Arriba</button>
+                  <button type="button" style={styles.regionButton} onClick={() => zoomRegion(-0.08)}>Zoom +</button>
+                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(-0.04, 0)}>Izq.</button>
+                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0.04, 0)}>Der.</button>
+                  <button type="button" style={styles.regionButton} onClick={() => moveRegion(0, 0.04)}>Abajo</button>
+                  <button type="button" style={styles.regionButton} onClick={() => zoomRegion(0.08)}>Zoom -</button>
+                </div>
+                {capturedImage && (
+                  <button type="button" style={styles.reprocessButton} disabled={isOcrReading} onClick={reprocessRegion}>
+                    {isOcrReading ? 'Leyendo...' : 'Releer etiqueta'}
+                  </button>
+                )}
+              </section>
+            )}
 
             <div style={styles.statusBox}>
               <strong>{cameraMessage}</strong>
@@ -324,10 +404,10 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
                 <strong>Captura asistida</strong>
                 <span>{isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
-              {isOcrReading && <div style={styles.ocrStatus}>Leyendo codigos en la imagen...</div>}
+              {isOcrReading && <div style={styles.ocrStatus}>Leyendo etiqueta seleccionada...</div>}
               {ocrDetectedCodes.length > 0 && (
                 <div style={styles.ocrCodes}>
-                  <span>Codigos detectados</span>
+                  <span>Posibles codigos detectados</span>
                   <div style={styles.ocrChipGrid}>
                     {ocrDetectedCodes.map((code) => (
                       <button
@@ -365,7 +445,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
                 {isInterpreting ? 'Agregando...' : 'Interpretar'}
               </button>
               {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
-              {ocrText && !ocrDetectedCodes.length && <div style={styles.ocrRaw}>Texto leido: {ocrText.slice(0, 90)}</div>}
+              {ocrText && !ocrDetectedCodes.length && <div style={styles.ocrRaw}>Texto leido: {ocrText.slice(0, 120)}</div>}
             </section>
 
             {codeHistory.length > 0 && (
@@ -435,6 +515,27 @@ function cameraErrorMessage(error) {
 
 function buildHistoryLabel(parsed, unitPrice) {
   return `${parsed.code}${unitPrice ? ` $${unitPrice}` : ''}`
+}
+
+function constrainRegion(region) {
+  const width = Math.max(0.2, Math.min(0.9, region.width))
+  const height = Math.max(0.14, Math.min(0.62, region.height))
+  return {
+    width,
+    height,
+    x: Math.max(0.02, Math.min(0.98 - width, region.x)),
+    y: Math.max(0.02, Math.min(0.98 - height, region.y))
+  }
+}
+
+function regionGuideStyle(region) {
+  return {
+    ...styles.regionGuide,
+    left: `${region.x * 100}%`,
+    top: `${region.y * 100}%`,
+    width: `${region.width * 100}%`,
+    height: `${region.height * 100}%`
+  }
 }
 
 function vibrateLight() {
@@ -511,6 +612,68 @@ const styles = {
     background: 'linear-gradient(180deg, rgba(17,17,17,0.24), rgba(17,17,17,0.7))',
     pointerEvents: 'none',
     touchAction: 'pan-y'
+  },
+  regionShade: {
+    position: 'absolute',
+    inset: 0,
+    background: 'linear-gradient(180deg, rgba(0,0,0,0.06), rgba(0,0,0,0.2))',
+    pointerEvents: 'none'
+  },
+  regionGuide: {
+    position: 'absolute',
+    border: '2px solid #10B981',
+    borderRadius: 18,
+    boxShadow: '0 0 0 999px rgba(0, 0, 0, 0.24), 0 0 0 4px rgba(16, 185, 129, 0.18)',
+    display: 'grid',
+    placeItems: 'center',
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 820,
+    textTransform: 'uppercase',
+    letterSpacing: 0,
+    pointerEvents: 'none',
+    boxSizing: 'border-box',
+    textShadow: '0 1px 4px rgba(0,0,0,0.45)'
+  },
+  regionTools: {
+    border: '1px solid #e4e4e4',
+    borderRadius: 22,
+    background: '#ffffff',
+    padding: 12,
+    display: 'grid',
+    gap: 10,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box'
+  },
+  regionGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: 8,
+    minWidth: 0,
+    maxWidth: '100%'
+  },
+  regionButton: {
+    minHeight: 42,
+    border: '1px solid #111111',
+    borderRadius: 16,
+    background: '#ffffff',
+    color: '#111111',
+    fontSize: 13,
+    fontWeight: 760,
+    boxSizing: 'border-box',
+    minWidth: 0
+  },
+  reprocessButton: {
+    width: '100%',
+    minHeight: 50,
+    border: '1px solid #0EA371',
+    borderRadius: 18,
+    background: '#10B981',
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 780,
+    boxSizing: 'border-box'
   },
   statusBox: {
     border: '1px solid #0EA371',
