@@ -11,6 +11,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const inputRef = useRef(null)
   const activeSubmitRef = useRef('')
   const ocrRunRef = useRef(0)
+  const capturedImageUrlRef = useRef('')
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
@@ -28,7 +29,11 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const canInterpret = Boolean(capturedImage && codeInput.trim() && !isInterpreting)
 
   useEffect(() => {
-    return () => stopCamera(false)
+    return () => {
+      ocrRunRef.current += 1
+      stopCamera(false)
+      revokeCapturedImage()
+    }
   }, [])
 
   const addDetectedCode = useCallback(async (parsed, options = {}) => {
@@ -144,7 +149,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   async function startCamera() {
     if (streamRef.current) {
       ocrRunRef.current += 1
-      setCapturedImage('')
+      clearCapturedImage()
       setOcrDetectedCodes([])
       setOcrText('')
       await attachVideoStream()
@@ -154,7 +159,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     }
 
     setCameraError('')
-    setCapturedImage('')
+    clearCapturedImage()
     setOcrDetectedCodes([])
     setOcrText('')
     setCameraMessage('Solicitando permiso de camara...')
@@ -196,7 +201,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
 
   async function repeatCapture() {
     ocrRunRef.current += 1
-    setCapturedImage('')
+    clearCapturedImage()
     setCameraError('')
     setIsOcrReading(false)
     setOcrDetectedCodes([])
@@ -222,6 +227,18 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     if (updateState) setCameraActive(false)
   }
 
+  function revokeCapturedImage() {
+    if (capturedImageUrlRef.current) {
+      URL.revokeObjectURL(capturedImageUrlRef.current)
+      capturedImageUrlRef.current = ''
+    }
+  }
+
+  function clearCapturedImage() {
+    revokeCapturedImage()
+    setCapturedImage('')
+  }
+
   function captureFrame() {
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -240,7 +257,13 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     const preprocessedImage = preprocessCanvasForOcr(canvas)
     const runId = ocrRunRef.current + 1
     ocrRunRef.current = runId
-    setCapturedImage(canvas.toDataURL('image/jpeg', 0.86))
+    canvas.toBlob((blob) => {
+      if (!blob || ocrRunRef.current !== runId) return
+      revokeCapturedImage()
+      const previewUrl = URL.createObjectURL(blob)
+      capturedImageUrlRef.current = previewUrl
+      setCapturedImage(previewUrl)
+    }, 'image/jpeg', 0.86)
     setCameraError('')
     setCameraMessage('Captura tomada. Leyendo codigos...')
     setAssistMessage('Leyendo codigos...')

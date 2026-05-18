@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
 import { fetchTodayAdminData, getPendingLocalSales, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
@@ -10,8 +10,9 @@ import ProductGrid from './pos/ProductGrid'
 import SaleEditor from './pos/SaleEditor'
 import SaleSummaryCard from './pos/SaleSummaryCard'
 import SavedTicketView from './pos/SavedTicketView'
-import ScannerPanel from './pos/ScannerPanel'
 import { Kicker, Muted, Page, Panel, PrimaryButton, Stack, TextInput, Title } from './pos/ui'
+
+const ScannerPanel = lazy(() => import('./pos/ScannerPanel'))
 
 const CATEGORIES = [
   'Anillo',
@@ -473,14 +474,16 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
       )}
 
       {screen === 'scanner' && (
-        <ScannerPanel
-          items={scannedItems}
-          onBack={() => setScreen('cashier')}
-          onChange={updateScannedItem}
-          onAddSuggestion={addScannedSuggestion}
-          onRemove={removeScannedItem}
-          onConfirm={confirmScannedItems}
-        />
+        <Suspense fallback={<ScannerLoadingView activeCity={activeCity} onBack={() => setScreen('cashier')} />}>
+          <ScannerPanel
+            items={scannedItems}
+            onBack={() => setScreen('cashier')}
+            onChange={updateScannedItem}
+            onAddSuggestion={addScannedSuggestion}
+            onRemove={removeScannedItem}
+            onConfirm={confirmScannedItems}
+          />
+        </Suspense>
       )}
 
       {screen === 'sale' && (
@@ -656,13 +659,31 @@ function PendingSalesView({ city, sales, message, syncing, onBack, onRetry }) {
               <div key={sale.id || sale.folio} style={styles.pendingCard}>
                 <strong>{sale.folio}</strong>
                 <span>{money(sale.total)} / {sale.paymentMethod || sale.payment_method || 'Pago'}</span>
-                <small>Pendiente de sincronizar</small>
+                <small>{pendingSaleStatus(sale)}</small>
+                {sale.syncError && <small style={styles.pendingError}>{sale.syncError}</small>}
               </div>
             ))
           )}
           <button type="button" disabled={!sales.length || syncing} style={{ ...styles.totalButton, opacity: sales.length && !syncing ? 1 : 0.45 }} onClick={onRetry}>
             {syncing ? 'Sincronizando...' : 'Reintentar sincronizar'}
           </button>
+        </div>
+      </Panel>
+    </>
+  )
+}
+
+function ScannerLoadingView({ activeCity, onBack }) {
+  return (
+    <>
+      <HeaderBar title="Escaner" subtitle={activeCity} actionLabel="Caja" onAction={onBack} />
+      <Panel style={styles.summaryPanel}>
+        <div style={styles.summaryStack}>
+          <div style={styles.summaryHero}>
+            <Kicker>Camara</Kicker>
+            <div style={styles.summaryCity}>Preparando escaner...</div>
+            <Muted>Cargando captura asistida solo cuando se usa.</Muted>
+          </div>
         </div>
       </Panel>
     </>
@@ -800,7 +821,15 @@ function ticketTime(sale) {
   if (!sale.created_at) return 'Sin hora'
   return new Date(sale.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
 }
+
+function pendingSaleStatus(sale) {
+  if (sale.syncStatus === 'syncing') return 'Sincronizando...'
+  if (sale.syncStatus === 'error') return 'Error al sincronizar'
+  return 'Pendiente de sincronizar'
+}
+
 function createId(prefix) {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
@@ -1187,6 +1216,10 @@ const styles = {
     gap: 4,
     minWidth: 0,
     overflowWrap: 'anywhere'
+  },
+  pendingError: {
+    color: '#991b1b',
+    fontWeight: 700
   },
   summaryEmpty: {
     border: '1px dashed #a3a3a3',

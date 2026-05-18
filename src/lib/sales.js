@@ -1,16 +1,30 @@
 import { hasSupabaseConfig, supabase } from '../supabase'
 
 const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
+const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
+const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
-const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount']
+const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id']
 const OPTIONAL_SALE_ITEM_COLUMNS = ['line_total']
 const OPTIONAL_SALE_SELECT_COLUMNS = ['status', 'cancellation_reason', 'cancel_reason', 'canceled_reason', 'audit_notes', 'ticket_sent_at']
 const OPTIONAL_PURCHASE_LOT_COLUMNS = ['name', 'purchase_place', 'purchase_date', 'total_investment', 'notes', 'total_cost']
 const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['product_code_id', 'code', 'quantity_purchased', 'quantity', 'suggested_price', 'total_cost']
 
+let pendingSyncInFlight = false
+
 export async function saveSale(sale) {
   if (!hasSupabaseConfig || !supabase) {
     return saveLocalSale(sale, 'Supabase no esta configurado en este entorno.')
+  }
+
+  const existingSale = await findSaleByFolio(sale.folio)
+  if (existingSale.data) {
+    return {
+      id: existingSale.data.id,
+      created_at: existingSale.data.created_at,
+      storage: 'supabase',
+      storageLabel: 'Venta ya sincronizada'
+    }
   }
 
   const salePayload = buildSalePayload(sale)
@@ -80,29 +94,61 @@ export function getPendingLocalSales(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
   return readLocalSales()
     .filter((sale) => sale.pendingSync !== false)
+    .filter((sale) => sale.syncStatus !== 'syncing' || isStaleSync(sale))
     .filter((sale) => matchesCity(sale, cityFilter))
 }
 
 export async function retryPendingLocalSales(filters = {}) {
   requireSupabase('sincronizar ventas pendientes')
+  if (pendingSyncInFlight) {
+    throw new Error('Ya hay una sincronizacion en curso.')
+  }
+
+  pendingSyncInFlight = true
   const cityFilter = typeof filters === 'string' ? filters : filters.city
   const pendingSales = getPendingLocalSales({ city: cityFilter })
   const synced = []
   const failed = []
+  const pendingIds = new Set(pendingSales.map((sale) => sale.id))
+  const syncStartedAt = new Date().toISOString()
 
-  for (const sale of pendingSales) {
-    try {
-      const result = await saveSaleToSupabase(normalizeLocalSaleForSync(sale))
-      synced.push({ localId: sale.id, folio: sale.folio, result })
-    } catch (error) {
-      failed.push({ sale, error: error.message || 'No se pudo sincronizar.' })
-    }
+  if (!pendingSales.length) {
+    pendingSyncInFlight = false
+    return { synced, failed, total: 0 }
   }
 
-  if (synced.length) {
+  writeLocalSales(readLocalSales().map((sale) => (
+    pendingIds.has(sale.id)
+      ? { ...sale, syncStatus: 'syncing', syncingAt: syncStartedAt, syncError: '' }
+      : sale
+  )))
+
+  try {
+    for (const sale of pendingSales) {
+      try {
+        const result = await saveSaleToSupabase(normalizeLocalSaleForSync(sale))
+        synced.push({ localId: sale.id, folio: sale.folio, result })
+      } catch (error) {
+        failed.push({ sale, error: error.message || 'No se pudo sincronizar.' })
+      }
+    }
+
     const syncedIds = new Set(synced.map((item) => item.localId))
-    const remaining = readLocalSales().filter((sale) => !syncedIds.has(sale.id))
+    const failedById = new Map(failed.map((item) => [item.sale.id, item.error]))
+    const remaining = readLocalSales()
+      .filter((sale) => !syncedIds.has(sale.id))
+      .map((sale) => failedById.has(sale.id)
+        ? {
+            ...sale,
+            syncStatus: 'error',
+            syncError: failedById.get(sale.id),
+            syncAttempts: Number(sale.syncAttempts || 0) + 1,
+            syncingAt: ''
+          }
+        : sale)
     writeLocalSales(remaining)
+  } finally {
+    pendingSyncInFlight = false
   }
 
   return { synced, failed, total: pendingSales.length }
@@ -462,6 +508,9 @@ function buildSalePayload(sale) {
     folio: sale.folio,
     cashier_id: sale.cashierId || null,
     cashier_name: sale.cashierName,
+    operator_name: sale.operatorName || sale.cashierName,
+    local_sale_id: sale.localSaleId || sale.clientSaleId || sale.folio || null,
+    device_session_id: getDeviceSessionId(),
     subtotal: sale.subtotal,
     discount_percent: sale.discountPercent,
     discount_amount: sale.discountAmount,
@@ -517,6 +566,22 @@ async function insertSaleWithCompatibleColumns(payload) {
   return {
     error: new Error('No se pudo adaptar el guardado a las columnas disponibles en sales.')
   }
+}
+
+async function findSaleByFolio(folio) {
+  if (!folio) return { data: null, error: null }
+
+  const { data, error } = await supabase
+    .from('sales')
+    .select('id, created_at')
+    .eq('folio', folio)
+    .maybeSingle()
+
+  if (error && !isMissingSchemaError(error)) {
+    logSupabaseError('[Supabase saveSale] folio lookup failed:', error)
+  }
+
+  return { data: error ? null : data, error }
 }
 
 async function fetchSalesRows({ start, end, cityFilter }) {
@@ -800,14 +865,21 @@ async function relateSaleItemsToInventory(savedItems) {
 
 function saveLocalSale(sale, reason) {
   const now = new Date().toISOString()
+  const localId = sale.localSaleId || sale.clientSaleId || createLocalSaleId()
   const localSale = {
     ...sale,
-    id: `local-${Date.now()}`,
+    id: localId,
+    localSaleId: localId,
+    clientSaleId: localId,
+    deviceSessionId: getDeviceSessionId(),
     created_at: now,
     storage: 'local',
     storageLabel: 'Pendiente de sincronizar',
     storageReason: reason,
-    pendingSync: true
+    pendingSync: true,
+    syncStatus: 'pending',
+    syncAttempts: Number(sale.syncAttempts || 0),
+    syncError: ''
   }
 
   const currentSales = readLocalSales()
@@ -829,9 +901,38 @@ function writeLocalSales(sales) {
   window.localStorage.setItem(LOCAL_SALES_KEY, JSON.stringify(sales))
 }
 
+function createLocalSaleId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return `local-${crypto.randomUUID()}`
+  return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getDeviceSessionId() {
+  if (typeof window === 'undefined') return ''
+
+  try {
+    const current = window.localStorage.getItem(LOCAL_SESSION_KEY)
+    if (current) return current
+    const next = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `device-${crypto.randomUUID()}`
+      : `device-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    window.localStorage.setItem(LOCAL_SESSION_KEY, next)
+    return next
+  } catch {
+    return ''
+  }
+}
+
+function isStaleSync(sale) {
+  if (!sale.syncingAt) return true
+  return Date.now() - new Date(sale.syncingAt).getTime() > SYNC_LOCK_TIMEOUT_MS
+}
+
 function normalizeLocalSaleForSync(sale) {
   return {
     ...sale,
+    localSaleId: sale.localSaleId || sale.clientSaleId || sale.id,
+    clientSaleId: sale.clientSaleId || sale.localSaleId || sale.id,
+    operatorName: sale.operatorName || sale.cashierName || sale.cashier || sale.cashier_name,
     cashierName: sale.cashierName || sale.cashier || sale.cashier_name,
     customerName: sale.customerName || sale.customer_name || '',
     customerWhatsapp: sale.customerWhatsapp || sale.customerPhone || sale.customer_whatsapp || '',
@@ -847,6 +948,16 @@ function normalizeLocalSaleForSync(sale) {
 }
 
 async function saveSaleToSupabase(sale) {
+  const existingSale = await findSaleByFolio(sale.folio)
+  if (existingSale.data) {
+    return {
+      id: existingSale.data.id,
+      created_at: existingSale.data.created_at,
+      storage: 'supabase',
+      storageLabel: 'Ya sincronizada'
+    }
+  }
+
   const salePayload = buildSalePayload(sale)
   const saleResult = await insertSaleWithCompatibleColumns(salePayload)
 

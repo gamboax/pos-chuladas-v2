@@ -38,6 +38,7 @@ function Login({ onLogin }) {
       return
     }
 
+    touchLastActive(data)
     onLogin(data)
   }
 
@@ -83,6 +84,17 @@ function Login({ onLogin }) {
       </section>
     </main>
   )
+}
+
+function touchLastActive(user) {
+  if (!supabase || !user?.id) return
+
+  supabase
+    .from('users')
+    .update({ last_active_at: new Date().toISOString() })
+    .eq('id', user.id)
+    .then(() => {})
+    .catch(() => {})
 }
 
 const page = {
