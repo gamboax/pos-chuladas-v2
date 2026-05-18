@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
+import { preprocessCanvasForOcr, recognizeCodesFromImage } from '../../lib/ocr'
+import { extractProductCodesFromText, lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import EditableItem from './EditableItem'
 import { Muted, Panel, PrimaryButton, SecondaryButton, Stack, TextInput, TopBar } from './ui'
 
@@ -9,6 +10,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const streamRef = useRef(null)
   const inputRef = useRef(null)
   const activeSubmitRef = useRef('')
+  const ocrRunRef = useRef(0)
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraMessage, setCameraMessage] = useState('Camara lista para activarse.')
   const [cameraError, setCameraError] = useState('')
@@ -17,6 +19,9 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   const [assistMessage, setAssistMessage] = useState('Toma foto y escribe codigo. Ej. A2 o A2-30.')
   const [assistError, setAssistError] = useState('')
   const [isInterpreting, setIsInterpreting] = useState(false)
+  const [isOcrReading, setIsOcrReading] = useState(false)
+  const [ocrDetectedCodes, setOcrDetectedCodes] = useState([])
+  const [ocrText, setOcrText] = useState('')
   const [codeHistory, setCodeHistory] = useState([])
   const canConfirm = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
   const livePreview = useMemo(() => (codeInput.trim() ? parseProductCode(codeInput) : null), [codeInput])
@@ -25,6 +30,34 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   useEffect(() => {
     return () => stopCamera(false)
   }, [])
+
+  const addDetectedCode = useCallback(async (parsed, options = {}) => {
+    const suggestedPrice = await lookupSuggestedPrice(parsed.code)
+    const unitPrice = suggestedPrice || parsed.parsedPrice || 0
+
+    onAddSuggestion({
+      capture_origin: 'scanner',
+      category: parsed.category,
+      material: parsed.material,
+      code_detected: parsed.code,
+      quantity: 1,
+      unitPrice,
+      subtotal: unitPrice
+    })
+
+    setCodeHistory((current) => [
+      { code: parsed.code, label: buildHistoryLabel(parsed, unitPrice), rawCode: parsed.rawCode || parsed.code },
+      ...current.filter((item) => item.code !== parsed.code)
+    ].slice(0, 6))
+
+    if (!options.silent) {
+      setAssistMessage(unitPrice ? `${parsed.code} agregado.` : `${parsed.code} agregado. Falta precio.`)
+      vibrateLight()
+      window.setTimeout(() => inputRef.current?.focus(), 60)
+    }
+
+    return unitPrice
+  }, [onAddSuggestion])
 
   const submitCode = useCallback(async (rawCode) => {
     if (!capturedImage || isInterpreting) return false
@@ -44,23 +77,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     setIsInterpreting(true)
     setAssistMessage('Buscando precio...')
 
-    const suggestedPrice = await lookupSuggestedPrice(parsed.code)
-    const unitPrice = suggestedPrice || parsed.parsedPrice || 0
-
-    onAddSuggestion({
-      capture_origin: 'scanner',
-      category: parsed.category,
-      material: parsed.material,
-      code_detected: parsed.code,
-      quantity: 1,
-      unitPrice,
-      subtotal: unitPrice
-    })
-
-    setCodeHistory((current) => [
-      { code: parsed.code, label: buildHistoryLabel(parsed, unitPrice), rawCode: parsed.rawCode || parsed.code },
-      ...current.filter((item) => item.code !== parsed.code)
-    ].slice(0, 6))
+    const unitPrice = await addDetectedCode(parsed, { silent: true })
     setCodeInput('')
     setAssistMessage(unitPrice ? `${parsed.code} agregado.` : `${parsed.code} agregado. Falta precio.`)
     setIsInterpreting(false)
@@ -68,7 +85,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     vibrateLight()
     window.setTimeout(() => inputRef.current?.focus(), 60)
     return true
-  }, [capturedImage, isInterpreting, onAddSuggestion])
+  }, [addDetectedCode, capturedImage, isInterpreting])
 
   useEffect(() => {
     if (!canInterpret || !livePreview?.ok) return undefined
@@ -80,9 +97,56 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     return () => window.clearTimeout(timeout)
   }, [canInterpret, codeInput, livePreview, submitCode])
 
+  async function runOcr(preprocessedImage, runId) {
+    setIsOcrReading(true)
+    setOcrDetectedCodes([])
+    setOcrText('')
+    setCameraMessage('Leyendo codigos...')
+    setAssistMessage('OCR leyendo captura. Puedes escribir el codigo si tienes prisa.')
+
+    try {
+      const text = await recognizeCodesFromImage(preprocessedImage)
+      if (ocrRunRef.current !== runId) return
+
+      const detected = extractProductCodesFromText(text)
+      setOcrText(text)
+      setOcrDetectedCodes(detected)
+
+      if (!detected.length) {
+        setAssistMessage('No pude leer codigo. Escribelo manualmente.')
+        setCameraMessage('Captura tomada. Revisa o escribe codigo.')
+        return
+      }
+
+      const seen = new Set()
+      for (const parsed of detected) {
+        const key = parsed.code
+        if (seen.has(key)) continue
+        seen.add(key)
+        await addDetectedCode(parsed, { silent: true })
+      }
+
+      setAssistMessage(`${detected.length} codigo(s) detectado(s). Revisa precios antes de confirmar.`)
+      setCameraMessage('Codigos detectados. Listo para revisar.')
+      vibrateLight()
+    } catch {
+      if (ocrRunRef.current !== runId) return
+      setAssistMessage('No pude leer codigo. Escribelo manualmente.')
+      setCameraMessage('Captura tomada. OCR no disponible.')
+    } finally {
+      if (ocrRunRef.current === runId) {
+        setIsOcrReading(false)
+        window.setTimeout(() => inputRef.current?.focus(), 60)
+      }
+    }
+  }
+
   async function startCamera() {
     if (streamRef.current) {
+      ocrRunRef.current += 1
       setCapturedImage('')
+      setOcrDetectedCodes([])
+      setOcrText('')
       await attachVideoStream()
       setCameraActive(true)
       setCameraMessage('Camara activa. Acomoda los codigos y toma captura.')
@@ -91,6 +155,8 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
 
     setCameraError('')
     setCapturedImage('')
+    setOcrDetectedCodes([])
+    setOcrText('')
     setCameraMessage('Solicitando permiso de camara...')
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -129,8 +195,12 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
   }
 
   async function repeatCapture() {
+    ocrRunRef.current += 1
     setCapturedImage('')
     setCameraError('')
+    setIsOcrReading(false)
+    setOcrDetectedCodes([])
+    setOcrText('')
     setCameraMessage(streamRef.current ? 'Camara activa. Toma otra captura.' : 'Activa la camara para repetir captura.')
 
     if (streamRef.current) {
@@ -167,11 +237,15 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
     canvas.height = height
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, width, height)
+    const preprocessedImage = preprocessCanvasForOcr(canvas)
+    const runId = ocrRunRef.current + 1
+    ocrRunRef.current = runId
     setCapturedImage(canvas.toDataURL('image/jpeg', 0.86))
     setCameraError('')
-    setCameraMessage('Captura tomada. Listo para revisar.')
-    setAssistMessage('Escribe codigo. Se interpreta solo.')
+    setCameraMessage('Captura tomada. Leyendo codigos...')
+    setAssistMessage('Leyendo codigos...')
     window.setTimeout(() => inputRef.current?.focus(), 90)
+    runOcr(preprocessedImage, runId)
   }
 
   function goBack() {
@@ -225,8 +299,26 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
             <section style={styles.assistBox}>
               <div style={styles.detectedHeader}>
                 <strong>Captura asistida</strong>
-                <span>{capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
+                <span>{isOcrReading ? 'Leyendo...' : capturedImage ? 'Listo para revisar' : 'Toma foto primero'}</span>
               </div>
+              {isOcrReading && <div style={styles.ocrStatus}>Leyendo codigos en la imagen...</div>}
+              {ocrDetectedCodes.length > 0 && (
+                <div style={styles.ocrCodes}>
+                  <span>Codigos detectados</span>
+                  <div style={styles.ocrChipGrid}>
+                    {ocrDetectedCodes.map((code) => (
+                      <button
+                        type="button"
+                        key={`${code.code}-${code.parsedPrice || ''}`}
+                        style={styles.ocrChip}
+                        onClick={() => submitCode(code.rawCode || code.code)}
+                      >
+                        {code.code}{code.parsedPrice ? ` $${code.parsedPrice}` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <TextInput
                 ref={inputRef}
                 value={codeInput}
@@ -250,6 +342,7 @@ export default function ScannerPanel({ items, onBack, onChange, onAddSuggestion,
                 {isInterpreting ? 'Agregando...' : 'Interpretar'}
               </button>
               {assistError ? <div style={styles.assistError}>{assistError}</div> : <Muted>{assistMessage}</Muted>}
+              {ocrText && !ocrDetectedCodes.length && <div style={styles.ocrRaw}>Texto leido: {ocrText.slice(0, 90)}</div>}
             </section>
 
             {codeHistory.length > 0 && (
@@ -470,6 +563,54 @@ const styles = {
     minWidth: 0,
     maxWidth: '100%',
     boxSizing: 'border-box'
+  },
+  ocrStatus: {
+    border: '1px solid #0EA371',
+    borderRadius: 18,
+    background: '#DFF8EC',
+    color: '#064E3B',
+    padding: '10px 12px',
+    fontSize: 14,
+    fontWeight: 760,
+    textAlign: 'center',
+    boxSizing: 'border-box',
+    maxWidth: '100%'
+  },
+  ocrCodes: {
+    border: '1px solid #e4e4e4',
+    borderRadius: 18,
+    background: '#ffffff',
+    padding: 11,
+    display: 'grid',
+    gap: 8,
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    fontSize: 13,
+    fontWeight: 760
+  },
+  ocrChipGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 7,
+    minWidth: 0
+  },
+  ocrChip: {
+    minHeight: 38,
+    border: '1px solid #111111',
+    borderRadius: 999,
+    background: '#111111',
+    color: '#ffffff',
+    padding: '0 12px',
+    fontSize: 13,
+    fontWeight: 780,
+    boxSizing: 'border-box'
+  },
+  ocrRaw: {
+    color: '#666666',
+    fontSize: 12,
+    fontWeight: 560,
+    overflowWrap: 'anywhere'
   },
   historyBox: {
     border: '1px solid #e4e4e4',

@@ -55,6 +55,23 @@ export function parseProductCode(rawCode) {
   }
 }
 
+export function extractProductCodesFromText(rawText) {
+  const normalized = normalizeOcrText(rawText)
+  const candidates = buildOcrCandidates(normalized)
+  const bestByCode = new Map()
+
+  candidates.forEach((candidate) => {
+    const parsed = parseProductCode(candidate)
+    if (!parsed.ok) return
+    const current = bestByCode.get(parsed.code)
+    if (!current || (!current.parsedPrice && parsed.parsedPrice)) {
+      bestByCode.set(parsed.code, parsed)
+    }
+  })
+
+  return [...bestByCode.values()]
+}
+
 export async function lookupSuggestedPrice(code) {
   if (!hasSupabaseConfig || !supabase || !code) return null
 
@@ -74,6 +91,77 @@ export async function lookupSuggestedPrice(code) {
 
 export function normalizeScannerCode(rawCode) {
   return String(rawCode || '').trim().toUpperCase()
+}
+
+function normalizeOcrText(rawText) {
+  return String(rawText || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[|]/g, 'I')
+    .replace(/[‘’]/g, "'")
+    .toUpperCase()
+}
+
+function buildOcrCandidates(text) {
+  const spaced = text.replace(/[^A-Z0-9.]+/g, ' ')
+  const compact = spaced.replace(/\s+/g, '')
+  const candidates = []
+  const codePattern = /([APTDIERJC])\s*[-_:.]?\s*([1-4ILZ])(?:\s*[-_:.]?\s*([0-9OILZS]{1,4}(?:[.,][0-9OILZS]{1,2})?))?/g
+  let match = codePattern.exec(spaced)
+
+  while (match) {
+    const material = normalizeOcrDigit(match[2])
+    const price = normalizeOcrNumber(match[3])
+    if (material) candidates.push(`${match[1]}${material}${price ? `-${price}` : ''}`)
+    match = codePattern.exec(spaced)
+  }
+
+  const compactPattern = /([APTDIERJC])([1-4ILZ])([0-9OILZS]{1,4})?/g
+  match = compactPattern.exec(compact)
+
+  while (match) {
+    const before = compact.slice(0, match.index)
+    const previousChar = before.slice(-1)
+    if (/[A-Z]/.test(previousChar) && !/(COD|CODE)$/.test(before)) {
+      match = compactPattern.exec(compact)
+      continue
+    }
+
+    const material = normalizeOcrDigit(match[2])
+    const price = normalizeOcrNumber(match[3])
+    if (material) candidates.push(`${match[1]}${material}${price ? `-${price}` : ''}`)
+    match = compactPattern.exec(compact)
+  }
+
+  if (/\bCAJA\b|CAJA/.test(spaced) || /CAJA/.test(compact)) candidates.push('CAJA')
+
+  const cajaPrice = compact.match(/CAJA([0-9OILZS]{1,4})/)
+  if (cajaPrice) candidates.push(`CAJA-${normalizeOcrNumber(cajaPrice[1])}`)
+
+  const xBox = spaced.match(/(?:^|\s)X\s*([0-9OILZS]{1,4})?(?:\s|$)/) || compact.match(/^X([0-9OILZS]{1,4})?$/)
+  if (xBox) candidates.push(`X${normalizeOcrNumber(xBox[1]) ? `-${normalizeOcrNumber(xBox[1])}` : ''}`)
+
+  return candidates
+}
+
+function normalizeOcrDigit(value) {
+  const text = String(value || '').toUpperCase()
+  if (text === 'I' || text === 'L') return '1'
+  if (text === 'Z') return '2'
+  return /^[1-4]$/.test(text) ? text : ''
+}
+
+function normalizeOcrNumber(value) {
+  const text = String(value || '')
+    .toUpperCase()
+    .replace(/[OI]/g, '0')
+    .replace(/[L]/g, '1')
+    .replace(/Z/g, '2')
+    .replace(/S/g, '5')
+    .replace(',', '.')
+    .replace(/[^0-9.]/g, '')
+  const price = Number(text)
+  return Number.isFinite(price) && price > 0 ? String(price) : ''
 }
 
 function findCodeMatch(code) {
