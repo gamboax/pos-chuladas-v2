@@ -34,15 +34,35 @@ export default function ScannerPanel({
   const [manualCode, setManualCode] = useState('')
   const [showManual, setShowManual] = useState(false)
   const [sheetPercent, setSheetPercent] = useState(SHEET_MID)
+  const [isSheetDragging, setIsSheetDragging] = useState(false)
 
   const visibleItems = useMemo(() => (Array.isArray(items) ? items : []), [items])
   const subtotal = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0), [visibleItems])
   const quantity = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [visibleItems])
   const canCommit = visibleItems.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
 
+  const updateSheetDrag = useCallback((clientY) => {
+    if (!dragRef.current) return
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720
+    const deltaPercent = ((dragRef.current.startY - clientY) / viewportHeight) * 100
+    const nextPercent = clampSheet(dragRef.current.startPercent + deltaPercent)
+    dragRef.current.currentPercent = nextPercent
+    setSheetPercent(nextPercent)
+  }, [])
+
+  const finishSheetDrag = useCallback(() => {
+    if (!dragRef.current) return
+    const current = dragRef.current.currentPercent || SHEET_MID
+    dragRef.current = null
+    const nearest = SHEET_SNAPS.reduce((best, snap) => (Math.abs(snap - current) < Math.abs(best - current) ? snap : best), SHEET_MID)
+    setIsSheetDragging(false)
+    setSheetPercent(nearest)
+  }, [])
+
   const addParsedProduct = useCallback(async (parsed, options = {}) => {
     const suggestedPrice = await lookupSuggestedPrice(parsed.code)
-    const unitPrice = Number(suggestedPrice || parsed.parsedPrice || options.price || 0)
+    const labelPrice = Number(options.price ?? parsed.parsedPrice ?? 0)
+    const unitPrice = Number(labelPrice || suggestedPrice || 0)
 
     onAddSuggestion({
       capture_origin: 'scanner',
@@ -73,6 +93,48 @@ export default function ScannerPanel({
     const timeout = window.setTimeout(() => startCameraRef.current?.(), 80)
     return () => window.clearTimeout(timeout)
   }, [])
+
+  useEffect(() => {
+    if (!isSheetDragging) return undefined
+
+    const handlePointerMove = (event) => {
+      if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+      event.preventDefault()
+      updateSheetDrag(event.clientY)
+    }
+    const handlePointerEnd = (event) => {
+      if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+      event.preventDefault()
+      finishSheetDrag()
+    }
+    const handleTouchMove = (event) => {
+      if (!dragRef.current || dragRef.current.pointerId !== 'touch') return
+      const touch = event.touches[0]
+      if (!touch) return
+      event.preventDefault()
+      updateSheetDrag(touch.clientY)
+    }
+    const handleTouchEnd = () => {
+      if (!dragRef.current || dragRef.current.pointerId !== 'touch') return
+      finishSheetDrag()
+    }
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false })
+    window.addEventListener('pointerup', handlePointerEnd, { passive: false })
+    window.addEventListener('pointercancel', handlePointerEnd, { passive: false })
+    window.addEventListener('touchmove', handleTouchMove, { passive: false })
+    window.addEventListener('touchend', handleTouchEnd, { passive: false })
+    window.addEventListener('touchcancel', handleTouchEnd, { passive: false })
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerEnd)
+      window.removeEventListener('pointercancel', handlePointerEnd)
+      window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('touchend', handleTouchEnd)
+      window.removeEventListener('touchcancel', handleTouchEnd)
+    }
+  }, [finishSheetDrag, isSheetDragging, updateSheetDrag])
 
   async function startCamera() {
     if (streamRef.current) {
@@ -268,32 +330,29 @@ export default function ScannerPanel({
     onChange(item.id, 'quantity', Math.max(0, Number(nextQuantity || 0)))
   }
 
-  function startSheetDrag(event) {
-    if (event.button !== undefined && event.button !== 0) return
+  function beginSheetDrag(clientY, pointerId) {
     dragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
+      pointerId,
+      startY: clientY,
       startPercent: sheetPercent,
       currentPercent: sheetPercent
     }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setIsSheetDragging(true)
   }
 
-  function moveSheetDrag(event) {
-    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720
-    const deltaPercent = ((dragRef.current.startY - event.clientY) / viewportHeight) * 100
-    const nextPercent = clampSheet(dragRef.current.startPercent + deltaPercent)
-    dragRef.current.currentPercent = nextPercent
-    setSheetPercent(nextPercent)
+  function startSheetDrag(event) {
+    if (dragRef.current) return
+    if (event.button !== undefined && event.button !== 0) return
+    event.preventDefault()
+    beginSheetDrag(event.clientY, event.pointerId)
   }
 
-  function endSheetDrag(event) {
-    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
-    const current = dragRef.current.currentPercent || sheetPercent
-    dragRef.current = null
-    const nearest = SHEET_SNAPS.reduce((best, snap) => (Math.abs(snap - current) < Math.abs(best - current) ? snap : best), SHEET_MID)
-    setSheetPercent(nearest)
+  function startSheetTouch(event) {
+    if (dragRef.current) return
+    const touch = event.touches[0]
+    if (!touch) return
+    event.preventDefault()
+    beginSheetDrag(touch.clientY, 'touch')
   }
 
   return (
@@ -336,13 +395,11 @@ export default function ScannerPanel({
         </div>
       </div>
 
-      <div style={{ ...styles.bottomSheet, height: `${sheetPercent}dvh` }}>
+      <div style={{ ...styles.bottomSheet, height: `${sheetPercent}dvh`, transition: isSheetDragging ? 'none' : styles.bottomSheet.transition }}>
         <div
           style={styles.sheetHandleZone}
           onPointerDown={startSheetDrag}
-          onPointerMove={moveSheetDrag}
-          onPointerUp={endSheetDrag}
-          onPointerCancel={endSheetDrag}
+          onTouchStart={startSheetTouch}
         >
           <div style={styles.sheetHandle} />
         </div>
@@ -576,7 +633,8 @@ const styles = {
     height: 42,
     borderRadius: '50%',
     border: '4px solid rgba(255,255,255,0.26)',
-    borderTopColor: '#10B981'
+    borderTopColor: '#10B981',
+    animation: 'scannerSpin 780ms linear infinite'
   },
   errorPill: {
     position: 'absolute',
@@ -617,24 +675,26 @@ const styles = {
     color: '#111111',
     padding: '8px 14px calc(14px + env(safe-area-inset-bottom))',
     display: 'grid',
-    gridTemplateRows: '22px auto minmax(0, 1fr) auto auto',
+    gridTemplateRows: '42px auto minmax(0, 1fr) auto auto',
     gap: 10,
     boxSizing: 'border-box',
     boxShadow: '0 -16px 34px rgba(0,0,0,0.22)',
     overflow: 'hidden',
-    transition: 'height 180ms ease'
+    transition: 'height 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+    willChange: 'height'
   },
   sheetHandleZone: {
     width: '100%',
-    height: 22,
+    height: 42,
     display: 'grid',
     placeItems: 'center',
     touchAction: 'none',
-    cursor: 'grab'
+    cursor: 'grab',
+    userSelect: 'none'
   },
   sheetHandle: {
-    width: 54,
-    height: 6,
+    width: 64,
+    height: 7,
     borderRadius: 999,
     background: '#c9c9c9'
   },

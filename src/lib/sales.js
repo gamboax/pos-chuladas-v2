@@ -401,23 +401,32 @@ export async function saveExpense(expense) {
 export async function saveCashCut(cut) {
   requireSupabase('guardar corte de caja')
 
+  const cashCounted = Number(cut.cashCounted || 0)
+  const expectedCash = Number(cut.expectedCash || 0)
+  const cashExpenses = Number(cut.cashExpenses || 0)
+  const difference = Number.isFinite(Number(cut.difference))
+    ? Number(cut.difference)
+    : cashCounted + cashExpenses - expectedCash
+
   const payload = {
     city: cut.city,
     cashier_name: cut.cashierName,
     total_sales: Number(cut.totalSales),
-    expected_cash: Number(cut.expectedCash),
-    cash_counted: Number(cut.cashCounted),
+    expected_cash: expectedCash,
+    cash_counted: cashCounted,
     transfer_total: Number(cut.transferTotal),
     card_total: Number(cut.cardTotal),
-    cash_expenses: Number(cut.cashExpenses),
-    difference: Number(cut.difference),
+    cash_expenses: cashExpenses,
+    difference,
+    expected_total: expectedCash,
+    counted_total: cashCounted,
     system_total: Number(cut.totalSales),
-    closing_amount: Number(cut.cashCounted),
-    difference_amount: Number(cut.difference),
+    closing_amount: cashCounted,
+    difference_amount: difference,
     notes: cut.notes || null
   }
 
-  const optionalColumns = ['total_sales', 'expected_cash', 'cash_counted', 'transfer_total', 'card_total', 'cash_expenses', 'difference', 'system_total', 'closing_amount', 'difference_amount', 'city']
+  const optionalColumns = ['total_sales', 'expected_cash', 'cash_counted', 'transfer_total', 'card_total', 'cash_expenses', 'difference', 'expected_total', 'counted_total', 'system_total', 'closing_amount', 'difference_amount', 'city']
   const result = await insertWithCompatibleColumns('cash_cuts', payload, optionalColumns)
 
   if (result.error) {
@@ -425,7 +434,14 @@ export async function saveCashCut(cut) {
     throw new Error(buildSupabaseModuleError(result.error, 'corte de caja'))
   }
 
-  return result.data
+  return {
+    ...payload,
+    ...result.data,
+    expected_cash: result.data?.expected_cash ?? result.data?.expected_total ?? expectedCash,
+    cash_counted: result.data?.cash_counted ?? result.data?.counted_total ?? result.data?.closing_amount ?? cashCounted,
+    cash_expenses: result.data?.cash_expenses ?? cashExpenses,
+    difference: result.data?.difference ?? result.data?.difference_amount ?? difference
+  }
 }
 
 export async function savePurchaseLot(lot) {
@@ -513,7 +529,16 @@ export async function importPartialV1Sales(sales) {
         continue
       }
 
-      const result = await insertSaleWithCompatibleColumns(buildV1ImportPayload(normalized), ['source', 'imported_partial', 'import_notes'])
+      const result = await insertSaleWithCompatibleColumns(buildV1ImportPayload(normalized), [
+        'operator_name',
+        'local_sale_id',
+        'device_session_id',
+        'source',
+        'imported_partial',
+        'original_source_id',
+        'imported_at',
+        'import_notes'
+      ])
 
       if (result.localFallback) {
         throw new Error(result.reason)

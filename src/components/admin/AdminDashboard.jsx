@@ -150,7 +150,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   }, [summary.sales, operationsCity])
   const managerOperationsSales = useMemo(() => summary.sales.slice().sort((a, b) => saleDate(b) - saleDate(a)), [summary.sales])
   const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
-  const cutDifference = Number(cashCounted || 0) - metrics.expectedCash
+  const cutDifference = calculateCashCutDifference(Number(cashCounted || 0), metrics.expectedCash, metrics.cashExpenses)
   const cityLabel = effectiveCity || 'Todas las ciudades'
   const eventLabel = usesMonthlyGlobalView ? `Resumen mensual: ${monthLabel(eventMonth)}` : effectiveCity ? `Evento activo: ${effectiveCity}` : 'Vista general del dia'
 
@@ -202,6 +202,11 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     setNotice('Ticket copiado.')
   }
 
+  async function handleCopySql(sql, label = 'SQL copiado.') {
+    await navigator.clipboard?.writeText(sql)
+    setNotice(label)
+  }
+
   async function handleResendWhatsApp(sale) {
     window.open(buildDashboardWhatsAppUrl(sale), '_blank', 'noopener,noreferrer')
     if (!isInvestor) {
@@ -250,20 +255,33 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     setNotice('')
 
     try {
-      await saveCashCut({
+      const cashCountedValue = Number(cashCounted || 0)
+      const nextDifference = calculateCashCutDifference(cashCountedValue, metrics.expectedCash, metrics.cashExpenses)
+      const savedCut = await saveCashCut({
         city: cityLabel,
         cashierName: user?.name || 'Admin',
         totalSales: metrics.totalSold,
         expectedCash: metrics.expectedCash,
-        cashCounted: Number(cashCounted || 0),
+        cashCounted: cashCountedValue,
         transferTotal: metrics.transferTotal,
         cardTotal: metrics.cardTotal,
         cashExpenses: metrics.cashExpenses,
-        difference: cutDifference,
+        difference: nextDifference,
         notes: cashCutNotes.trim()
       })
+      setSummary((current) => mergeSavedCashCut(current, savedCut, {
+        city: cityLabel,
+        cashierName: user?.name || 'Admin',
+        totalSales: metrics.totalSold,
+        expectedCash: metrics.expectedCash,
+        cashCounted: cashCountedValue,
+        transferTotal: metrics.transferTotal,
+        cardTotal: metrics.cardTotal,
+        cashExpenses: metrics.cashExpenses,
+        difference: nextDifference,
+        notes: cashCutNotes.trim()
+      }))
       setNotice('Corte de caja guardado.')
-      setCashCounted('')
       setCashCutNotes('')
       await loadDashboard()
     } catch (saveError) {
@@ -810,10 +828,12 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   )}
                   <details style={styles.breakdownGroup}>
                     <summary style={styles.breakdownSummary}>ALTER puntual si faltan columnas<span>SQL</span></summary>
+                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_SQL, 'ALTER del importador copiado.')}>Copiar SQL</button>
                     <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
                   </details>
                   <details style={styles.breakdownGroup}>
                     <summary style={styles.breakdownSummary}>Fix puntual si es RLS/policies<span>SQL</span></summary>
+                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_RLS_SQL, 'SQL de permisos copiado.')}>Copiar SQL</button>
                     <pre style={styles.ticketText}>{V1_IMPORT_RLS_SQL}</pre>
                   </details>
                 </section>
@@ -2162,7 +2182,7 @@ function buildMetrics(sales, expenses, cashCuts) {
   const transferTotal = Number(byPayment.Transferencia || 0)
   const cardTotal = Number(byPayment.Tarjeta || 0)
   const mixedTotal = Number(byPayment.Mixto || 0)
-  const expectedCash = cashSales - cashExpenses
+  const expectedCash = cashSales
   const latestDifference = cashCuts.length ? Number(cashCuts[0].difference || 0) : 0
   const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
   const estimatedCost = totalSold / 3
@@ -2170,6 +2190,38 @@ function buildMetrics(sales, expenses, cashCuts) {
   const netProfit = grossProfit - totalExpenses
 
   return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured }
+}
+
+function calculateCashCutDifference(cashCounted, expectedCash, cashExpenses) {
+  return Number(cashCounted || 0) + Number(cashExpenses || 0) - Number(expectedCash || 0)
+}
+
+function mergeSavedCashCut(summary, savedCut, fallback) {
+  const normalized = {
+    id: savedCut?.id || `cash-cut-${Date.now()}`,
+    city: savedCut?.city ?? fallback.city,
+    cashier_name: savedCut?.cashier_name ?? fallback.cashierName,
+    total_sales: numericFallback(savedCut?.total_sales ?? savedCut?.system_total, fallback.totalSales),
+    expected_cash: numericFallback(savedCut?.expected_cash ?? savedCut?.expected_total, fallback.expectedCash),
+    cash_counted: numericFallback(savedCut?.cash_counted ?? savedCut?.counted_total ?? savedCut?.closing_amount, fallback.cashCounted),
+    transfer_total: numericFallback(savedCut?.transfer_total, fallback.transferTotal),
+    card_total: numericFallback(savedCut?.card_total, fallback.cardTotal),
+    cash_expenses: numericFallback(savedCut?.cash_expenses, fallback.cashExpenses),
+    difference: numericFallback(savedCut?.difference ?? savedCut?.difference_amount, fallback.difference),
+    notes: savedCut?.notes ?? fallback.notes ?? '',
+    created_at: savedCut?.created_at || new Date().toISOString()
+  }
+
+  return {
+    ...summary,
+    cashCuts: [normalized, ...(summary.cashCuts || []).filter((cut) => cut.id !== normalized.id)]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }
+}
+
+function numericFallback(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : Number(fallback || 0)
 }
 
 function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
