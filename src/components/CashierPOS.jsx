@@ -10,6 +10,7 @@ import ProductGrid from './pos/ProductGrid'
 import SaleEditor from './pos/SaleEditor'
 import SaleSummaryCard from './pos/SaleSummaryCard'
 import SavedTicketView from './pos/SavedTicketView'
+import ScannerErrorBoundary from './pos/ScannerErrorBoundary'
 import { Kicker, Muted, Page, Panel, PrimaryButton, Stack, TextInput, Title } from './pos/ui'
 
 const ScannerPanel = lazy(() => import('./pos/ScannerPanel'))
@@ -476,17 +477,19 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
       {screen === 'scanner' && (
         <Suspense fallback={<ScannerLoadingView activeCity={activeCity} onBack={() => setScreen('cashier')} />}>
-          <ScannerPanel
-            city={activeCity}
-            folio={folio}
-            items={scannedItems}
-            onBack={() => setScreen('cashier')}
-            onCheckout={() => setScreen('checkout')}
-            onChange={updateScannedItem}
-            onAddSuggestion={addScannedSuggestion}
-            onRemove={removeScannedItem}
-            onConfirm={() => confirmScannedItems('scanner')}
-          />
+          <ScannerErrorBoundary onBack={() => setScreen('cashier')}>
+            <ScannerPanel
+              city={activeCity}
+              folio={folio}
+              items={scannedItems}
+              onBack={() => setScreen('cashier')}
+              onCheckout={() => setScreen('checkout')}
+              onChange={updateScannedItem}
+              onAddSuggestion={addScannedSuggestion}
+              onRemove={removeScannedItem}
+              onConfirm={() => confirmScannedItems('scanner')}
+            />
+          </ScannerErrorBoundary>
         </Suspense>
       )}
 

@@ -3,7 +3,17 @@ import { createAiLabelImage } from '../../lib/ocr'
 import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import { money } from '../../lib/ticket'
 
-export default function ScannerPanel({ city, folio, items, onBack, onCheckout, onChange, onAddSuggestion, onRemove, onConfirm }) {
+export default function ScannerPanel({
+  city = '',
+  folio = '',
+  items = [],
+  onBack = () => {},
+  onCheckout = () => {},
+  onChange = () => {},
+  onAddSuggestion = () => {},
+  onRemove = () => {},
+  onConfirm = () => false
+}) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
@@ -18,9 +28,10 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
   const [manualCode, setManualCode] = useState('')
   const [showManual, setShowManual] = useState(false)
 
-  const subtotal = useMemo(() => items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0), [items])
-  const quantity = useMemo(() => items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [items])
-  const canCommit = items.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
+  const visibleItems = useMemo(() => (Array.isArray(items) ? items : []), [items])
+  const subtotal = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0), [visibleItems])
+  const quantity = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [visibleItems])
+  const canCommit = visibleItems.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
 
   const addParsedProduct = useCallback(async (parsed, options = {}) => {
     const suggestedPrice = await lookupSuggestedPrice(parsed.code)
@@ -67,7 +78,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
     setError('')
     setStatus('Abriendo camara...')
 
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setStatus('Camara no disponible')
       setError('Puedes capturar el codigo manualmente.')
       setShowManual(true)
@@ -135,6 +146,10 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
     canvas.width = width
     canvas.height = height
     const context = canvas.getContext('2d')
+    if (!context) {
+      setError('No se pudo preparar la foto. Intenta de nuevo.')
+      return
+    }
     context.drawImage(video, 0, 0, width, height)
     const runId = runRef.current + 1
     runRef.current = runId
@@ -157,6 +172,7 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
 
     try {
       const image = createAiLabelImage(canvas)
+      if (!image) throw new Error('No se pudo preparar la imagen.')
       if (runId !== runRef.current) return
 
       const response = await fetch('/api/analyze-label', {
@@ -297,10 +313,10 @@ export default function ScannerPanel({ city, folio, items, onBack, onCheckout, o
         </div>
 
         <div style={styles.cartList}>
-          {items.length === 0 ? (
+          {visibleItems.length === 0 ? (
             <div style={styles.emptyCart}>Toma una foto. Los productos detectados apareceran aqui.</div>
           ) : (
-            items.map((item) => (
+            visibleItems.map((item) => (
               <ScannerCartRow
                 key={item.id}
                 item={item}
