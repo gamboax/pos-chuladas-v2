@@ -99,6 +99,8 @@ function buildVisionRequest(image) {
               'Analiza esta imagen completa de articulos de joyeria con etiquetas manuscritas.',
               'Busca todos los codigos visibles como A2, E3, J2, C1, X o CAJA y precios escritos cerca como $35, 90, 120.',
               'Puede haber varias etiquetas en una misma imagen, chuecas, pequenas o parcialmente visibles.',
+              'Si hay varios productos con el mismo codigo pero distinto precio, devuelvelos como items separados.',
+              'Si hay varios productos con el mismo codigo y mismo precio, puedes devolverlos como items separados o usar quantity mayor a 1.',
               'Devuelve unicamente JSON valido. No inventes productos si no estas seguro.',
               'Reglas: A=Anillo, P=Pulsera, T=Tobillera, D=Collar con dije, I=Dije, E=Arete, R=Rosario, J=Juego, C=Cadena, X/CAJA=Caja.',
               'Material: 1=Acero inoxidable, 2=Oro laminado, 3=Bano de rodio, 4=Bano de plata.',
@@ -132,10 +134,11 @@ function buildVisionRequest(image) {
                   category: { type: 'string' },
                   material: { type: ['string', 'null'] },
                   price: { type: ['number', 'null'] },
+                  quantity: { type: 'number' },
                   confidence: { type: 'number' },
                   raw_text: { type: 'string' }
                 },
-                required: ['code', 'category', 'material', 'price', 'confidence', 'raw_text']
+                required: ['code', 'category', 'material', 'price', 'quantity', 'confidence', 'raw_text']
               }
             }
           },
@@ -176,28 +179,27 @@ function findOutputText(payload) {
 }
 
 function validateItems(items) {
-  const seen = new Set()
   const valid = []
 
   for (const item of items) {
     const normalized = normalizeCode(item.code)
     const match = normalized.match(/^(CAJA|X|[APTDIERJC][1-4])$/)
-    if (!match || seen.has(normalized)) continue
+    if (!match) continue
 
     const categoryKey = normalized === 'CAJA' ? 'CAJA' : normalized[0]
     const materialDigit = normalized.length === 2 ? normalized[1] : ''
     const price = Number(item.price)
+    const quantity = Math.max(1, Math.min(99, Math.round(Number(item.quantity || 1) || 1)))
 
     valid.push({
       code: normalized,
       category: CATEGORY_BY_CODE[categoryKey] || item.category || '',
       material: normalized === 'X' || normalized === 'CAJA' ? '' : MATERIAL_BY_CODE[materialDigit] || item.material || '',
       price: Number.isFinite(price) && price > 0 ? price : null,
+      quantity,
       confidence: clampConfidence(item.confidence),
       raw_text: String(item.raw_text || item.code || '')
     })
-
-    seen.add(normalized)
   }
 
   return valid

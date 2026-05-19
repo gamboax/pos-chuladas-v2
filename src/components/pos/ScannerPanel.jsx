@@ -3,6 +3,11 @@ import { createAiLabelImage } from '../../lib/ocr'
 import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import { money } from '../../lib/ticket'
 
+const SHEET_MIN = 28
+const SHEET_MID = 48
+const SHEET_MAX = 70
+const SHEET_SNAPS = [SHEET_MIN, SHEET_MID, SHEET_MAX]
+
 export default function ScannerPanel({
   city = '',
   folio = '',
@@ -21,12 +26,14 @@ export default function ScannerPanel({
   const startCameraRef = useRef(null)
   const runRef = useRef(0)
   const aiAbortRef = useRef(null)
+  const dragRef = useRef(null)
   const [cameraActive, setCameraActive] = useState(false)
   const [status, setStatus] = useState('Abriendo camara...')
   const [error, setError] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [manualCode, setManualCode] = useState('')
   const [showManual, setShowManual] = useState(false)
+  const [sheetPercent, setSheetPercent] = useState(SHEET_MID)
 
   const visibleItems = useMemo(() => (Array.isArray(items) ? items : []), [items])
   const subtotal = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0), [visibleItems])
@@ -194,13 +201,11 @@ export default function ScannerPanel({
         return
       }
 
+      const groupedItems = groupParsedItems(parsedItems)
       let added = 0
-      const seen = new Set()
-      for (const parsed of parsedItems) {
-        if (seen.has(parsed.code)) continue
-        seen.add(parsed.code)
-        await addParsedProduct(parsed)
-        added += 1
+      for (const parsed of groupedItems) {
+        await addParsedProduct(parsed, { quantity: parsed.quantity })
+        added += Number(parsed.quantity || 1)
       }
 
       setStatus(`${added} articulo(s) agregados`)
@@ -263,6 +268,34 @@ export default function ScannerPanel({
     onChange(item.id, 'quantity', Math.max(0, Number(nextQuantity || 0)))
   }
 
+  function startSheetDrag(event) {
+    if (event.button !== undefined && event.button !== 0) return
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startPercent: sheetPercent,
+      currentPercent: sheetPercent
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function moveSheetDrag(event) {
+    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720
+    const deltaPercent = ((dragRef.current.startY - event.clientY) / viewportHeight) * 100
+    const nextPercent = clampSheet(dragRef.current.startPercent + deltaPercent)
+    dragRef.current.currentPercent = nextPercent
+    setSheetPercent(nextPercent)
+  }
+
+  function endSheetDrag(event) {
+    if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) return
+    const current = dragRef.current.currentPercent || sheetPercent
+    dragRef.current = null
+    const nearest = SHEET_SNAPS.reduce((best, snap) => (Math.abs(snap - current) < Math.abs(best - current) ? snap : best), SHEET_MID)
+    setSheetPercent(nearest)
+  }
+
   return (
     <section style={styles.root}>
       <div style={styles.cameraStage}>
@@ -287,7 +320,7 @@ export default function ScannerPanel({
 
         {isAnalyzing && (
           <div style={styles.analysisOverlay}>
-            <div style={styles.loader} />
+            <div className="scanner-spinner" style={styles.loader} />
             <strong>Analizando productos...</strong>
           </div>
         )}
@@ -303,7 +336,17 @@ export default function ScannerPanel({
         </div>
       </div>
 
-      <div style={styles.bottomSheet}>
+      <div style={{ ...styles.bottomSheet, height: `${sheetPercent}dvh` }}>
+        <div
+          style={styles.sheetHandleZone}
+          onPointerDown={startSheetDrag}
+          onPointerMove={moveSheetDrag}
+          onPointerUp={endSheetDrag}
+          onPointerCancel={endSheetDrag}
+        >
+          <div style={styles.sheetHandle} />
+        </div>
+
         <div style={styles.summaryRow}>
           <div>
             <span style={styles.caption}>Subtotal scanner</span>
@@ -389,11 +432,35 @@ function normalizeAiItems(items) {
       return {
         ...parsed,
         parsedPrice: Number(item.price || parsed.parsedPrice || 0) || null,
+        quantity: Math.max(1, Math.round(Number(item.quantity || 1) || 1)),
         rawCode: item.raw_text || raw,
         confidence: Number(item.confidence || 0)
       }
     })
     .filter(Boolean)
+}
+
+function groupParsedItems(items) {
+  const groups = new Map()
+
+  items.forEach((item) => {
+    const price = Number(item.parsedPrice || 0)
+    const key = `${item.code}|${price || 'no-price'}`
+    const current = groups.get(key)
+    if (current) {
+      current.quantity += Number(item.quantity || 1)
+      current.rawCode = [current.rawCode, item.rawCode].filter(Boolean).join(' / ')
+      return
+    }
+
+    groups.set(key, { ...item, quantity: Number(item.quantity || 1) })
+  })
+
+  return [...groups.values()]
+}
+
+function clampSheet(value) {
+  return Math.max(SHEET_MIN, Math.min(SHEET_MAX, Number(value) || SHEET_MID))
 }
 
 function cameraErrorMessage(error) {
@@ -545,16 +612,31 @@ const styles = {
   },
   bottomSheet: {
     width: '100%',
-    maxHeight: '48dvh',
     borderRadius: '28px 28px 0 0',
     background: '#f4f4f4',
     color: '#111111',
-    padding: '14px 14px calc(14px + env(safe-area-inset-bottom))',
+    padding: '8px 14px calc(14px + env(safe-area-inset-bottom))',
     display: 'grid',
+    gridTemplateRows: '22px auto minmax(0, 1fr) auto auto',
     gap: 10,
     boxSizing: 'border-box',
     boxShadow: '0 -16px 34px rgba(0,0,0,0.22)',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    transition: 'height 180ms ease'
+  },
+  sheetHandleZone: {
+    width: '100%',
+    height: 22,
+    display: 'grid',
+    placeItems: 'center',
+    touchAction: 'none',
+    cursor: 'grab'
+  },
+  sheetHandle: {
+    width: 54,
+    height: 6,
+    borderRadius: 999,
+    background: '#c9c9c9'
   },
   summaryRow: {
     display: 'grid',
@@ -590,8 +672,8 @@ const styles = {
     gap: 8,
     overflowY: 'auto',
     WebkitOverflowScrolling: 'touch',
+    overscrollBehavior: 'contain',
     minHeight: 46,
-    maxHeight: '19dvh',
     paddingRight: 2
   },
   emptyCart: {
