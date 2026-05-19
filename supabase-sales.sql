@@ -93,6 +93,9 @@ alter table public.sales add column if not exists imported_partial boolean not n
 alter table public.sales add column if not exists original_source_id text;
 alter table public.sales add column if not exists imported_at timestamptz;
 alter table public.sales add column if not exists import_notes text;
+alter table public.sales add column if not exists operator_name text;
+alter table public.sales add column if not exists local_sale_id text;
+alter table public.sales add column if not exists device_session_id text;
 
 create table if not exists public.purchase_lots (
   id uuid primary key default gen_random_uuid(),

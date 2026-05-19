@@ -21,8 +21,21 @@ alter table public.sales add column if not exists imported_partial boolean not n
 alter table public.sales add column if not exists original_source_id text;
 alter table public.sales add column if not exists imported_at timestamptz;
 alter table public.sales add column if not exists import_notes text;
+alter table public.sales add column if not exists operator_name text;
+alter table public.sales add column if not exists local_sale_id text;
+alter table public.sales add column if not exists device_session_id text;
 create index if not exists sales_source_idx on public.sales (source);
 create index if not exists sales_original_source_id_idx on public.sales (original_source_id);`
+const V1_IMPORT_RLS_SQL = `grant select, insert on public.sales to anon, authenticated;
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'sales' and policyname = 'Allow public sales inserts') then
+    create policy "Allow public sales inserts" on public.sales for insert to anon, authenticated with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'sales' and policyname = 'Allow public sales select') then
+    create policy "Allow public sales select" on public.sales for select to anon, authenticated using (true);
+  end if;
+end $$;`
 
 function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const role = user?.role || 'admin'
@@ -356,7 +369,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     }
   }
 
-  async function handleImportV1Sales() {
+  async function handleImportV1Sales(limit = null) {
     if (!isSuperAdmin || importingV1 || !v1ImportPreview?.validRows.length) return
 
     setImportingV1(true)
@@ -364,7 +377,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     setNotice('')
 
     try {
-      const result = await importPartialV1Sales(v1ImportPreview.validRows)
+      const rowsToImport = limit ? v1ImportPreview.validRows.slice(0, limit) : v1ImportPreview.validRows
+      const result = await importPartialV1Sales(rowsToImport)
       setV1ImportResult(result)
       setNotice(`Import V1: ${result.imported.length} importada(s), ${result.duplicated.length} duplicada(s), ${result.errors.length} error(es).`)
       await loadDashboard()
@@ -760,19 +774,47 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                           />
                         ))}
                       </div>
-                      <button type="button" style={styles.primaryButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={handleImportV1Sales}>
-                        {importingV1 ? 'Importando...' : 'Importar ventas V1'}
-                      </button>
+                      <div style={styles.exportGrid}>
+                        <button type="button" style={styles.smallActionButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales(2)}>
+                          {importingV1 ? 'Importando...' : 'Probar 2 filas'}
+                        </button>
+                        <button type="button" style={styles.primaryButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales()}>
+                          {importingV1 ? 'Importando...' : 'Importar todo'}
+                        </button>
+                      </div>
                     </div>
                   )}
                   {v1ImportResult && (
-                    <div style={styles.notice}>
-                      Importadas: {v1ImportResult.imported.length} / Duplicadas: {v1ImportResult.duplicated.length} / Errores: {v1ImportResult.errors.length} / Parciales: {v1ImportResult.partial}
+                    <div style={styles.auditGroup}>
+                      <div style={styles.notice}>
+                        Importadas: {v1ImportResult.imported.length} / Duplicadas: {v1ImportResult.duplicated.length} / Errores: {v1ImportResult.errors.length} / Parciales: {v1ImportResult.partial}
+                      </div>
+                      {v1ImportResult.errors.length > 0 && (
+                        <details style={styles.breakdownGroup} open>
+                          <summary style={styles.breakdownSummary}>Errores por fila<span>{v1ImportResult.errors.length}</span></summary>
+                          <div style={styles.itemStack}>
+                            {v1ImportResult.errors.slice(0, 12).map((item, index) => (
+                              <AuditInfoCard
+                                key={`${item.folio || item.sale?.folio || 'fila'}-${index}`}
+                                title={item.folio || item.sale?.folio || `Fila ${item.row || index + 1}`}
+                                meta={`Fila ${item.row || item.sale?.index || '?'} / ${item.sale?.city || 'Sin ciudad'} / ${money(item.total || item.sale?.total || 0)}`}
+                                value="Error"
+                                status={item.error}
+                              />
+                            ))}
+                            {v1ImportResult.errors.length > 12 && <div style={styles.empty}>Mostrando 12 errores. Corrige el primero y vuelve a probar.</div>}
+                          </div>
+                        </details>
+                      )}
                     </div>
                   )}
                   <details style={styles.breakdownGroup}>
                     <summary style={styles.breakdownSummary}>ALTER puntual si faltan columnas<span>SQL</span></summary>
                     <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
+                  </details>
+                  <details style={styles.breakdownGroup}>
+                    <summary style={styles.breakdownSummary}>Fix puntual si es RLS/policies<span>SQL</span></summary>
+                    <pre style={styles.ticketText}>{V1_IMPORT_RLS_SQL}</pre>
                   </details>
                 </section>
 
@@ -1612,6 +1654,27 @@ function parseFlexibleDate(value) {
 
   const direct = new Date(text)
   if (!Number.isNaN(direct.getTime())) return direct
+
+  const isoLike = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(?:\s*([+-]\d{2})(?::?(\d{2}))?)?$/)
+  if (isoLike) {
+    const year = Number(isoLike[1])
+    const month = Number(isoLike[2])
+    const day = Number(isoLike[3])
+    const hours = Number(isoLike[4] || 12)
+    const minutes = Number(isoLike[5] || 0)
+    const seconds = Number(isoLike[6] || 0)
+    const offsetHours = isoLike[7] ? Number(isoLike[7]) : null
+    const offsetMinutes = Number(isoLike[8] || 0)
+
+    if (offsetHours !== null) {
+      const utc = Date.UTC(year, month - 1, day, hours, minutes, seconds)
+      const offset = (Math.abs(offsetHours) * 60 + offsetMinutes) * 60 * 1000 * (offsetHours < 0 ? -1 : 1)
+      return new Date(utc - offset)
+    }
+
+    const local = new Date(year, month - 1, day, hours, minutes, seconds)
+    return Number.isNaN(local.getTime()) ? null : local
+  }
 
   const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
   if (!match) return null

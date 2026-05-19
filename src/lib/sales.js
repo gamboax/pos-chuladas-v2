@@ -520,12 +520,18 @@ export async function importPartialV1Sales(sales) {
       }
 
       if (result.error) {
-        throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo importar venta.')
+        throw new Error(formatSupabaseError(result.error) || 'No se pudo importar venta.')
       }
 
       imported.push(result.data)
     } catch (error) {
-      errors.push({ sale, error: error.message || 'No se pudo importar venta.' })
+      errors.push({
+        sale,
+        row: sale.index || sale.row || '',
+        folio: sale.folio || '',
+        total: sale.total || '',
+        error: error.message || 'No se pudo importar venta.'
+      })
     }
   }
 
@@ -703,20 +709,6 @@ async function insertSaleWithCompatibleColumns(payload, requiredColumns = []) {
       return { data }
     }
 
-    if (isMissingSchemaError(error)) {
-      return {
-        localFallback: true,
-        reason: 'La tabla sales no existe o no esta expuesta en Supabase.'
-      }
-    }
-
-    if (isNetworkError(error)) {
-      return {
-        localFallback: true,
-        reason: offlineReason()
-      }
-    }
-
     const missingColumn = OPTIONAL_SALE_COLUMNS.find((column) => mentionsColumn(error, column))
 
     if (missingColumn && requiredColumns.includes(missingColumn)) {
@@ -729,6 +721,20 @@ async function insertSaleWithCompatibleColumns(payload, requiredColumns = []) {
       nextPayload = { ...nextPayload }
       delete nextPayload[missingColumn]
       continue
+    }
+
+    if (isMissingSchemaError(error)) {
+      return {
+        localFallback: true,
+        reason: 'La tabla sales no existe o no esta expuesta en Supabase.'
+      }
+    }
+
+    if (isNetworkError(error)) {
+      return {
+        localFallback: true,
+        reason: offlineReason()
+      }
     }
 
     return { error }
@@ -1260,6 +1266,17 @@ function offlineReason() {
 function friendlySupabaseMessage(error) {
   if (isNetworkError(error)) return offlineReason()
   return error?.message || ''
+}
+
+function formatSupabaseError(error) {
+  if (!error) return ''
+  const parts = [
+    error.message,
+    error.details,
+    error.hint,
+    error.code ? `code: ${error.code}` : ''
+  ].filter(Boolean)
+  return parts.join(' / ')
 }
 
 function isNetworkError(error) {
