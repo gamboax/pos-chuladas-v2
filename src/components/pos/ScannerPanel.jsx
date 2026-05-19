@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createAiLabelImage } from '../../lib/ocr'
 import { lookupSuggestedPrice, parseProductCode } from '../../lib/scannerCodes'
 import { money } from '../../lib/ticket'
@@ -21,12 +21,15 @@ export default function ScannerPanel({
 }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
+  const sheetRef = useRef(null)
   const streamRef = useRef(null)
   const manualInputRef = useRef(null)
   const startCameraRef = useRef(null)
   const runRef = useRef(0)
   const aiAbortRef = useRef(null)
   const dragRef = useRef(null)
+  const sheetPercentRef = useRef(SHEET_MID)
+  const sheetFrameRef = useRef(0)
   const [cameraActive, setCameraActive] = useState(false)
   const [status, setStatus] = useState('Abriendo camara...')
   const [error, setError] = useState('')
@@ -41,13 +44,18 @@ export default function ScannerPanel({
   const quantity = useMemo(() => visibleItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0), [visibleItems])
   const canCommit = visibleItems.some((item) => Number(item.quantity) > 0 && Number(item.unitPrice) > 0)
 
+  useEffect(() => {
+    sheetPercentRef.current = sheetPercent
+  }, [sheetPercent])
+
   const updateSheetDrag = useCallback((clientY) => {
     if (!dragRef.current) return
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720
     const deltaPercent = ((dragRef.current.startY - clientY) / viewportHeight) * 100
     const nextPercent = clampSheet(dragRef.current.startPercent + deltaPercent)
     dragRef.current.currentPercent = nextPercent
-    setSheetPercent(nextPercent)
+    sheetPercentRef.current = nextPercent
+    scheduleSheetTransform(sheetRef, sheetFrameRef, sheetPercentRef)
   }, [])
 
   const finishSheetDrag = useCallback(() => {
@@ -55,6 +63,7 @@ export default function ScannerPanel({
     const current = dragRef.current.currentPercent || SHEET_MID
     dragRef.current = null
     const nearest = SHEET_SNAPS.reduce((best, snap) => (Math.abs(snap - current) < Math.abs(best - current) ? snap : best), SHEET_MID)
+    sheetPercentRef.current = nearest
     setIsSheetDragging(false)
     setSheetPercent(nearest)
   }, [])
@@ -334,8 +343,8 @@ export default function ScannerPanel({
     dragRef.current = {
       pointerId,
       startY: clientY,
-      startPercent: sheetPercent,
-      currentPercent: sheetPercent
+      startPercent: sheetPercentRef.current,
+      currentPercent: sheetPercentRef.current
     }
     setIsSheetDragging(true)
   }
@@ -385,17 +394,24 @@ export default function ScannerPanel({
         )}
 
         {error && (
-          <div style={styles.errorPill}>{error}</div>
+          <div style={{ ...styles.errorPill, bottom: `calc(${sheetPercent}dvh + 16px)` }}>{error}</div>
         )}
 
-        <div style={styles.captureDock}>
+        <div style={{ ...styles.captureDock, bottom: `calc(${sheetPercent}dvh + 18px)` }}>
           <button type="button" style={styles.shutter} onClick={captureFrame} disabled={!cameraActive || isAnalyzing}>
             {isAnalyzing ? '...' : ''}
           </button>
         </div>
       </div>
 
-      <div style={{ ...styles.bottomSheet, height: `${sheetPercent}dvh`, transition: isSheetDragging ? 'none' : styles.bottomSheet.transition }}>
+      <div
+        ref={sheetRef}
+        style={{
+          ...styles.bottomSheet,
+          transform: sheetTransform(sheetPercent),
+          transition: isSheetDragging ? 'none' : styles.bottomSheet.transition
+        }}
+      >
         <div
           style={styles.sheetHandleZone}
           onPointerDown={startSheetDrag}
@@ -452,7 +468,7 @@ export default function ScannerPanel({
   )
 }
 
-function ScannerCartRow({ item, onQuantity, onChange, onRemove }) {
+const ScannerCartRow = memo(function ScannerCartRow({ item, onQuantity, onChange, onRemove }) {
   const code = item.code_detected || item.category
 
   return (
@@ -478,7 +494,7 @@ function ScannerCartRow({ item, onQuantity, onChange, onRemove }) {
       />
     </article>
   )
-}
+})
 
 function normalizeAiItems(items) {
   return items
@@ -520,6 +536,18 @@ function clampSheet(value) {
   return Math.max(SHEET_MIN, Math.min(SHEET_MAX, Number(value) || SHEET_MID))
 }
 
+function sheetTransform(percent) {
+  return `translate3d(0, ${Math.max(0, SHEET_MAX - clampSheet(percent))}dvh, 0)`
+}
+
+function scheduleSheetTransform(sheetRef, frameRef, percentRef) {
+  if (frameRef.current) return
+  frameRef.current = window.requestAnimationFrame(() => {
+    frameRef.current = 0
+    if (sheetRef.current) sheetRef.current.style.transform = sheetTransform(percentRef.current)
+  })
+}
+
 function cameraErrorMessage(error) {
   if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') return 'Permiso de camara denegado.'
   if (error?.name === 'NotFoundError' || error?.name === 'DevicesNotFoundError') return 'No se encontro camara.'
@@ -538,14 +566,13 @@ const styles = {
     zIndex: 50,
     background: '#050505',
     color: '#ffffff',
-    display: 'grid',
-    gridTemplateRows: 'minmax(0, 1fr) auto',
     minWidth: 0,
     overflow: 'hidden',
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
   },
   cameraStage: {
-    position: 'relative',
+    position: 'absolute',
+    inset: 0,
     minHeight: 0,
     background: '#050505',
     overflow: 'hidden',
@@ -640,7 +667,6 @@ const styles = {
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 102,
     borderRadius: 18,
     background: 'rgba(255,245,245,0.96)',
     color: '#991b1b',
@@ -653,7 +679,6 @@ const styles = {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 18,
     display: 'grid',
     placeItems: 'center',
     pointerEvents: 'none'
@@ -669,7 +694,12 @@ const styles = {
     opacity: 1
   },
   bottomSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     width: '100%',
+    height: `${SHEET_MAX}dvh`,
     borderRadius: '28px 28px 0 0',
     background: '#f4f4f4',
     color: '#111111',
@@ -680,8 +710,9 @@ const styles = {
     boxSizing: 'border-box',
     boxShadow: '0 -16px 34px rgba(0,0,0,0.22)',
     overflow: 'hidden',
-    transition: 'height 220ms cubic-bezier(0.22, 1, 0.36, 1)',
-    willChange: 'height'
+    transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+    willChange: 'transform',
+    transform: sheetTransform(SHEET_MID)
   },
   sheetHandleZone: {
     width: '100%',

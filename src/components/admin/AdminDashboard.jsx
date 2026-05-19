@@ -827,8 +827,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                     </div>
                   )}
                   <details style={styles.breakdownGroup}>
-                    <summary style={styles.breakdownSummary}>ALTER puntual si faltan columnas<span>SQL</span></summary>
-                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_SQL, 'ALTER del importador copiado.')}>Copiar SQL</button>
+                    <summary style={styles.breakdownSummary}>Setup importador V1<span>SQL unico</span></summary>
+                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_SQL, 'Setup del importador copiado.')}>Copiar SQL</button>
                     <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
                   </details>
                   <details style={styles.breakdownGroup}>
@@ -1851,17 +1851,19 @@ function buildCityRows(sales, expenses, inventory) {
   const rows = new Map()
 
   sales.forEach((sale) => {
-    const city = sale.city || 'Sin ciudad'
-    const current = rows.get(city) || { city, sales: [], expenses: [] }
+    const key = cityGroupKey(sale.city)
+    const city = formatCityName(sale.city)
+    const current = rows.get(key) || { city, sales: [], expenses: [] }
     current.sales.push(sale)
-    rows.set(city, current)
+    rows.set(key, current)
   })
 
   expenses.forEach((expense) => {
-    const city = expense.city || 'Sin ciudad'
-    const current = rows.get(city) || { city, sales: [], expenses: [] }
+    const key = cityGroupKey(expense.city)
+    const city = formatCityName(expense.city)
+    const current = rows.get(key) || { city, sales: [], expenses: [] }
     current.expenses.push(expense)
-    rows.set(city, current)
+    rows.set(key, current)
   })
 
   return [...rows.values()]
@@ -1993,12 +1995,13 @@ function buildCityRanking(sales, totalExpenses) {
   const rows = new Map()
 
   sales.forEach((sale) => {
-    const city = sale.city || 'Sin ciudad'
-    const current = rows.get(city) || { city, salesCount: 0, totalSold: 0, estimatedProfit: 0 }
+    const key = cityGroupKey(sale.city)
+    const city = formatCityName(sale.city)
+    const current = rows.get(key) || { city, salesCount: 0, totalSold: 0, estimatedProfit: 0 }
     current.salesCount += 1
     current.totalSold += saleTotal(sale)
     current.estimatedProfit += estimateSaleProfit(sale)
-    rows.set(city, current)
+    rows.set(key, current)
   })
 
   const cityCount = rows.size || 1
@@ -2283,6 +2286,16 @@ function normalizeCode(code) {
   return String(code || '').trim().toUpperCase()
 }
 
+function cityGroupKey(city) {
+  return normalizeImportText(city || 'Sin ciudad') || 'sin ciudad'
+}
+
+function formatCityName(city) {
+  const value = String(city || '').trim()
+  if (!value) return 'Sin ciudad'
+  return value.toLocaleLowerCase('es-MX').replace(/\b[\p{L}]/gu, (letter) => letter.toLocaleUpperCase('es-MX'))
+}
+
 function quantityPurchasedOf(item) {
   return Number(item.quantity_purchased ?? item.quantity ?? 0)
 }
@@ -2331,7 +2344,7 @@ function roleLabel(role) {
 }
 
 function cityEquals(a, b) {
-  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
+  return normalizeImportText(a) === normalizeImportText(b)
 }
 
 function saleStatusLabel(sale) {

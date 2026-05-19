@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { normalizeUser, saveUserSession } from '../lib/session'
 import { supabase } from '../supabase'
 
@@ -7,6 +7,14 @@ function Login({ onLogin }) {
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const preload = window.setTimeout(() => {
+      import('./CashierPOS').catch(() => {})
+    }, 120)
+
+    return () => window.clearTimeout(preload)
+  }, [])
 
   async function handleLogin() {
     if (loading) return
@@ -33,14 +41,14 @@ function Login({ onLogin }) {
       .eq('pin', pin.trim())
       .maybeSingle()
 
-    setLoading(false)
-
     if (error || !data) {
+      setLoading(false)
       setError('Datos incorrectos')
       return
     }
 
     if (data.active === false) {
+      setLoading(false)
       setError('Usuario inactivo.')
       return
     }
@@ -49,6 +57,7 @@ function Login({ onLogin }) {
     saveUserSession(user)
     touchLastActive(user)
     onLogin(user)
+    setLoading(false)
   }
 
   function submitOnEnter(event) {
