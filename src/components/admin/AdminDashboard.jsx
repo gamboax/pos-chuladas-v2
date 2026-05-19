@@ -1174,7 +1174,14 @@ function SuperAdminHierarchy({
             <button type="button" style={styles.linkButton} onClick={() => setActiveView('month')}>Volver al mes</button>
           </div>
           {!selectedCity ? (
-            <div style={styles.empty}>Toca una ciudad del ranking para ver su detalle.</div>
+            analytics.cityRows.length === 0 ? (
+              <div style={styles.empty}>Sin ciudades con ventas en este mes.</div>
+            ) : (
+              <div style={styles.itemStack}>
+                <div style={styles.notice}>Toca una ciudad para ver su detalle.</div>
+                {analytics.cityRows.map((city) => <CityDrillRow key={city.city} city={city} max={analytics.topCitySales} onOpen={openCity} />)}
+              </div>
+            )
           ) : (
             <>
               <div style={styles.grid}>
@@ -1794,6 +1801,7 @@ function buildCityRows(sales, expenses, inventory) {
         totalExpenses: cityExpenses
       }
     })
+    .filter((row) => row.totalSold > 0 || row.salesCount > 0)
     .sort((a, b) => b.totalSold - a.totalSold)
 }
 

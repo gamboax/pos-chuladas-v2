@@ -259,6 +259,51 @@ El MVP esta preparado para operar eventos reales con foco en caja movil:
 - dashboard operativo por rol
 - gastos, cortes, inventario/lotes y exportaciones basicas
 
+---
+
+# SEGURIDAD MVP Y HARDENING
+
+## Login actual
+
+El login actual es un login operativo simple contra tabla `users` con:
+- nombre
+- PIN
+- rol
+- active
+
+Para acelerar operacion en evento:
+- la consulta de login debe pedir solo `id, name, role, active`
+- `last_active_at` se actualiza en segundo plano si existe
+- la sesion local se guarda de forma simple por hasta 12 horas para evitar relogin lento
+
+Riesgo conocido:
+- este login no reemplaza Supabase Auth
+- el PIN no debe considerarse autenticacion fuerte
+- no usar para usuarios externos o datos altamente sensibles sin migrar auth
+
+Ruta gradual recomendada:
+1. Migrar usuarios reales a Supabase Auth.
+2. Mover roles a `app_metadata` o tabla privada de perfiles.
+3. Endurecer RLS por rol y ciudad/evento.
+4. Mantener anon key solo para flujos publicos estrictamente permitidos.
+
+## Endpoint IA
+
+El endpoint de analisis de etiquetas:
+- nunca expone `OPENAI_API_KEY` al frontend
+- valida metodo, content-type y tamano maximo de payload
+- acepta solo imagen base64 jpeg/png/webp
+- no guarda imagenes
+- no debe loggear imagenes ni secretos
+- si falta key o falla IA, la app cae a captura manual sin bloquear venta
+
+## Permisos por rol
+
+- cashier: caja y resumen del dia; sin gastos, utilidad, inventario ni anulaciones.
+- manager/admin_operativo/admin: dashboard operativo, tickets, gastos y cortes; sin inventario maestro ni anulaciones.
+- super_admin: control completo, auditoria, exportaciones e importaciones V1.
+- investor: solo lectura; sin botones operativos.
+
 ## Performance
 
 - Login carga solo la pantalla de login.

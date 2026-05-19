@@ -2,6 +2,8 @@
 
 const DEFAULT_MODEL = 'gpt-4.1-mini'
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
+const MAX_BODY_BYTES = 1_500_000
+const MAX_IMAGE_CHARS = 1_200_000
 
 const CATEGORY_BY_CODE = {
   A: 'Anillo',
@@ -28,6 +30,16 @@ export default async function handler(request, response) {
   if (request.method !== 'POST') {
     response.setHeader('Allow', 'POST')
     return response.status(405).json({ items: [], message: 'Metodo no permitido.' })
+  }
+
+  const contentLength = Number(request.headers['content-length'] || 0)
+  if (contentLength > MAX_BODY_BYTES) {
+    return response.status(413).json({ items: [], message: 'Imagen demasiado grande. Toma otra foto.' })
+  }
+
+  const contentType = String(request.headers['content-type'] || '')
+  if (contentType && !contentType.toLowerCase().includes('application/json')) {
+    return response.status(415).json({ items: [], message: 'Formato de imagen no compatible.' })
   }
 
   const apiKey = process.env.OPENAI_API_KEY
@@ -73,8 +85,10 @@ export default async function handler(request, response) {
 }
 
 function buildVisionRequest(image) {
+  const model = String(process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL
+
   return {
-    model: process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL,
+    model,
     input: [
       {
         role: 'user',
@@ -202,5 +216,5 @@ function clampConfidence(value) {
 }
 
 function isValidDataImage(image) {
-  return /^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image) && image.length < 1_200_000
+  return /^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image) && image.length <= MAX_IMAGE_CHARS
 }

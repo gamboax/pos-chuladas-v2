@@ -1,5 +1,6 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import Login from './components/Login'
+import { clearUserSession, readUserSession, refreshUserSession } from './lib/session'
 
 const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard'))
 const CashierPOS = lazy(() => import('./components/CashierPOS'))
@@ -8,13 +9,37 @@ const CASHIER_ROLES = new Set(['cashier', 'manager', 'admin_operativo', 'admin',
 const ADMIN_ROLES = new Set(['manager', 'admin_operativo', 'admin', 'super_admin'])
 
 function App() {
-  const [user, setUser] = useState(null)
+  const [user, setUser] = useState(() => readUserSession())
   const [view, setView] = useState('pos')
+  const userId = user?.id
 
   function logout() {
+    clearUserSession()
     setUser(null)
     setView('pos')
   }
+
+  useEffect(() => {
+    if (!userId) return undefined
+
+    let alive = true
+    refreshUserSession({ id: userId })
+      .then((freshUser) => {
+        if (!alive) return
+        if (!freshUser) {
+          clearUserSession()
+          setUser(null)
+          setView('pos')
+          return
+        }
+        setUser(freshUser)
+      })
+      .catch(() => {})
+
+    return () => {
+      alive = false
+    }
+  }, [userId])
 
   if (!user) {
     return <Login onLogin={setUser} />

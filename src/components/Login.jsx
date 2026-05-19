@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { normalizeUser, saveUserSession } from '../lib/session'
 import { supabase } from '../supabase'
 
 function Login({ onLogin }) {
@@ -23,13 +24,14 @@ function Login({ onLogin }) {
     }
 
     setLoading(true)
+    await nextFrame()
 
     const { data, error } = await supabase
       .from('users')
-      .select('*')
+      .select('id, name, role, active')
       .eq('name', name.trim())
       .eq('pin', pin.trim())
-      .single()
+      .maybeSingle()
 
     setLoading(false)
 
@@ -38,8 +40,15 @@ function Login({ onLogin }) {
       return
     }
 
-    touchLastActive(data)
-    onLogin(data)
+    if (data.active === false) {
+      setError('Usuario inactivo.')
+      return
+    }
+
+    const user = normalizeUser(data)
+    saveUserSession(user)
+    touchLastActive(user)
+    onLogin(user)
   }
 
   function submitOnEnter(event) {
@@ -84,6 +93,10 @@ function Login({ onLogin }) {
       </section>
     </main>
   )
+}
+
+function nextFrame() {
+  return new Promise((resolve) => window.requestAnimationFrame(resolve))
 }
 
 function touchLastActive(user) {
