@@ -1,8 +1,10 @@
 import { hasSupabaseConfig, supabase } from '../supabase'
 
 const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
+const SAVE_ATTEMPTS_KEY = 'pos_chuladas_save_attempts'
 const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
 const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000
+const MAX_SAVE_ATTEMPTS = 40
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
 const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id', 'source', 'imported_partial', 'original_source_id', 'imported_at', 'import_notes', 'created_at']
 const OPTIONAL_SALE_ITEM_COLUMNS = ['line_total']
@@ -13,71 +15,53 @@ const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['product_code_id', 'code', 'quantity_pur
 let pendingSyncInFlight = false
 
 export async function saveSale(sale) {
-  if (!hasSupabaseConfig || !supabase) {
-    return saveLocalSale(sale, 'Supabase no esta configurado en este entorno.')
-  }
+  const safeSale = normalizeSaleForPersistence(sale)
+  const salePayload = buildSalePayload(safeSale)
+  const saleItemsPayload = buildSaleItemsPayload('pending-sale-id', safeSale.items)
+  const localBackup = saveLocalSale(
+    safeSale,
+    hasSupabaseConfig && supabase ? 'Respaldo local antes de sincronizar.' : 'Supabase no esta configurado en este entorno.',
+    { syncStatus: hasSupabaseConfig && supabase ? 'syncing' : 'pending', syncError: '' }
+  )
 
-  const existingSale = await findSaleByFolio(sale.folio)
-  if (existingSale.data) {
-    return {
-      id: existingSale.data.id,
-      created_at: existingSale.data.created_at,
-      storage: 'supabase',
-      storageLabel: 'Venta ya sincronizada'
-    }
-  }
-
-  const salePayload = buildSalePayload(sale)
-  const saleResult = await insertSaleWithCompatibleColumns(salePayload)
-
-  if (saleResult.localFallback) {
-    logSupabaseError('[Supabase saveSale] fallback local:', saleResult.reason)
-    return saveLocalSale(sale, saleResult.reason)
-  }
-
-  if (saleResult.error) {
-    logSupabaseError('[Supabase saveSale] sales insert failed:', saleResult.error)
-    if (isNetworkError(saleResult.error)) {
-      return saveLocalSale(sale, offlineReason())
-    }
-
-    throw new Error(`No se pudo guardar en Supabase: ${friendlySupabaseMessage(saleResult.error)}`)
-  }
-
-  const savedSale = saleResult.data
-  const saleItems = sale.items.map((item) => {
-    const subtotal = itemSubtotal(item)
-    return {
-      sale_id: savedSale.id,
-      category: item.category,
-      quantity: Number(item.quantity),
-      unit_price: Number(item.unitPrice),
-      subtotal,
-      line_total: subtotal,
-      material: item.material || null,
-      code_detected: normalizeCode(item.code_detected) || null,
-      capture_origin: item.capture_origin || 'manual'
-    }
+  recordSaleSaveAttempt({
+    status: hasSupabaseConfig && supabase ? 'syncing' : 'pending',
+    stage: hasSupabaseConfig && supabase ? 'local_backup' : 'local_only',
+    sale: safeSale,
+    salePayload,
+    saleItemsPayload,
+    error: hasSupabaseConfig && supabase ? '' : 'Supabase no esta configurado en este entorno.'
   })
 
-  const { data: savedItems, error: itemsError } = await insertSaleItemsWithCompatibleColumns(saleItems)
-
-  if (itemsError) {
-    logSupabaseError('[Supabase saveSale] sale_items insert failed:', itemsError, saleItems)
-    const detail = isMissingSchemaError(itemsError)
-      ? 'La tabla sale_items no existe o no esta expuesta en Supabase.'
-      : friendlySupabaseMessage(itemsError)
-
-    throw new Error(`La venta se creo, pero no se pudieron guardar sus articulos: ${detail}`)
+  if (!hasSupabaseConfig || !supabase) {
+    return localBackup
   }
 
-  await relateSaleItemsToInventory(savedItems || [])
-
-  return {
-    id: savedSale.id,
-    created_at: savedSale.created_at,
-    storage: 'supabase',
-    storageLabel: 'Guardada en Supabase'
+  try {
+    const savedSale = await saveSaleToSupabase(safeSale)
+    markLocalSaleSynced(localBackup.id, safeSale.folio, savedSale)
+    recordSaleSaveAttempt({
+      status: 'synced',
+      stage: savedSale.storageLabel || 'supabase_saved',
+      sale: safeSale,
+      salePayload,
+      saleItemsPayload,
+      supabaseId: savedSale.id
+    })
+    return savedSale
+  } catch (error) {
+    const message = error.message || 'No se pudo sincronizar la venta.'
+    logSupabaseError('[Supabase saveSale] kept local fallback:', message, { salePayload, saleItemsPayload })
+    const pendingSale = markLocalSaleError(localBackup.id, safeSale.folio, message)
+    recordSaleSaveAttempt({
+      status: 'error',
+      stage: 'supabase_failed_pending_local',
+      sale: safeSale,
+      salePayload,
+      saleItemsPayload,
+      error: message
+    })
+    return pendingSale || localBackup
   }
 }
 
@@ -96,6 +80,13 @@ export function getPendingLocalSales(filters = {}) {
     .filter((sale) => sale.pendingSync !== false)
     .filter((sale) => sale.syncStatus !== 'syncing' || isStaleSync(sale))
     .filter((sale) => matchesCity(sale, cityFilter))
+}
+
+export function getSaleSaveAttempts(filters = {}) {
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  return readSaveAttempts()
+    .filter((attempt) => matchesCity(attempt, cityFilter))
+    .slice(0, MAX_SAVE_ATTEMPTS)
 }
 
 export async function retryPendingLocalSales(filters = {}) {
@@ -125,10 +116,36 @@ export async function retryPendingLocalSales(filters = {}) {
 
   try {
     for (const sale of pendingSales) {
+      const safeSale = normalizeSaleForPersistence(normalizeLocalSaleForSync(sale))
+      const salePayload = buildSalePayload(safeSale)
+      const saleItemsPayload = buildSaleItemsPayload('pending-sale-id', safeSale.items)
+      recordSaleSaveAttempt({
+        status: 'syncing',
+        stage: 'retry_pending',
+        sale: safeSale,
+        salePayload,
+        saleItemsPayload
+      })
       try {
-        const result = await saveSaleToSupabase(normalizeLocalSaleForSync(sale))
+        const result = await saveSaleToSupabase(safeSale)
+        recordSaleSaveAttempt({
+          status: 'synced',
+          stage: 'retry_pending_saved',
+          sale: safeSale,
+          salePayload,
+          saleItemsPayload,
+          supabaseId: result.id
+        })
         synced.push({ localId: sale.id, folio: sale.folio, result })
       } catch (error) {
+        recordSaleSaveAttempt({
+          status: 'error',
+          stage: 'retry_pending_failed',
+          sale: safeSale,
+          salePayload,
+          saleItemsPayload,
+          error: error.message || 'No se pudo sincronizar.'
+        })
         failed.push({ sale, error: error.message || 'No se pudo sincronizar.' })
       }
     }
@@ -687,6 +704,64 @@ function buildSalePayload(sale) {
   return payload
 }
 
+function buildSaleItemsPayload(saleId, items = []) {
+  return items.map((item) => {
+    const subtotal = itemSubtotal(item)
+    return {
+      sale_id: saleId,
+      category: sanitizeSaleItemCategory(item.category),
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unitPrice),
+      subtotal,
+      line_total: subtotal,
+      material: item.material || null,
+      code_detected: normalizeCode(item.code_detected) || null,
+      capture_origin: item.capture_origin || 'manual'
+    }
+  })
+}
+
+function normalizeSaleForPersistence(sale) {
+  const items = (sale.items || [])
+    .map((item) => ({
+      ...item,
+      category: sanitizeSaleItemCategory(item.category),
+      quantity: Number(item.quantity || 0),
+      unitPrice: Number(item.unitPrice ?? item.unit_price ?? 0),
+      subtotal: Number(item.subtotal ?? item.line_total ?? Number(item.quantity || 0) * Number(item.unitPrice ?? item.unit_price ?? 0))
+    }))
+    .filter((item) => item.quantity > 0 && item.unitPrice > 0)
+
+  if (!items.length) {
+    throw new Error('La venta no tiene articulos validos para guardar.')
+  }
+
+  const subtotal = Number(sale.subtotal ?? items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0))
+  const discountAmount = Number(sale.discountAmount ?? sale.discount_amount ?? 0)
+  const total = Number(sale.total ?? Math.max(0, subtotal - discountAmount))
+
+  return {
+    ...sale,
+    folio: String(sale.folio || '').trim(),
+    city: String(sale.city || '').trim(),
+    cashierName: sale.cashierName || sale.cashier || sale.cashier_name || 'Cajera',
+    paymentMethod: sale.paymentMethod || sale.payment_method || 'Efectivo',
+    customerName: sale.customerName || sale.customer_name || '',
+    customerWhatsapp: sale.customerWhatsapp || sale.customerPhone || sale.customer_whatsapp || '',
+    customerType: sale.customerType || sale.customer_type || '',
+    discountPercent: Number(sale.discountPercent ?? sale.discount_percent ?? 0),
+    discountAmount,
+    subtotal,
+    total,
+    items
+  }
+}
+
+function sanitizeSaleItemCategory(category) {
+  const value = String(category || '').trim()
+  return value || 'Sin categoria'
+}
+
 function normalizeV1ImportSale(sale) {
   const total = Number(sale.total || 0)
   const createdAt = normalizeImportDate(sale.createdAt || sale.created_at || sale.date || sale.fecha)
@@ -1161,7 +1236,7 @@ async function relateSaleItemsToInventory(savedItems) {
   }
 }
 
-function saveLocalSale(sale, reason) {
+function saveLocalSale(sale, reason, options = {}) {
   const now = new Date().toISOString()
   const localId = sale.localSaleId || sale.clientSaleId || createLocalSaleId()
   const localSale = {
@@ -1175,9 +1250,9 @@ function saveLocalSale(sale, reason) {
     storageLabel: 'Pendiente de sincronizar',
     storageReason: reason,
     pendingSync: true,
-    syncStatus: 'pending',
+    syncStatus: options.syncStatus || 'pending',
     syncAttempts: Number(sale.syncAttempts || 0),
-    syncError: ''
+    syncError: options.syncError || ''
   }
 
   const currentSales = readLocalSales()
@@ -1185,6 +1260,47 @@ function saveLocalSale(sale, reason) {
   writeLocalSales(nextSales)
 
   return localSale
+}
+
+function markLocalSaleSynced(localId, folio, savedSale) {
+  const syncedAt = new Date().toISOString()
+  writeLocalSales(readLocalSales().map((sale) => (
+    sale.id === localId || sale.folio === folio
+      ? {
+          ...sale,
+          supabaseId: savedSale.id,
+          created_at: savedSale.created_at || sale.created_at,
+          storage: 'supabase',
+          storageLabel: 'Guardada en Supabase',
+          storageReason: '',
+          pendingSync: false,
+          syncStatus: 'synced',
+          syncError: '',
+          syncedAt,
+          syncingAt: ''
+        }
+      : sale
+  )))
+}
+
+function markLocalSaleError(localId, folio, message) {
+  let updatedSale = null
+  writeLocalSales(readLocalSales().map((sale) => {
+    if (sale.id !== localId && sale.folio !== folio) return sale
+    updatedSale = {
+      ...sale,
+      storage: 'local',
+      storageLabel: 'Pendiente de sincronizar',
+      storageReason: message,
+      pendingSync: true,
+      syncStatus: 'error',
+      syncError: message,
+      syncAttempts: Number(sale.syncAttempts || 0) + 1,
+      syncingAt: ''
+    }
+    return updatedSale
+  }))
+  return updatedSale
 }
 
 function readLocalSales() {
@@ -1197,6 +1313,42 @@ function readLocalSales() {
 
 function writeLocalSales(sales) {
   window.localStorage.setItem(LOCAL_SALES_KEY, JSON.stringify(sales))
+}
+
+function readSaveAttempts() {
+  try {
+    return JSON.parse(window.localStorage.getItem(SAVE_ATTEMPTS_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+function writeSaveAttempts(attempts) {
+  window.localStorage.setItem(SAVE_ATTEMPTS_KEY, JSON.stringify(attempts.slice(0, MAX_SAVE_ATTEMPTS)))
+}
+
+function recordSaleSaveAttempt({ status, stage, sale, salePayload, saleItemsPayload, error = '', supabaseId = '' }) {
+  if (typeof window === 'undefined') return
+
+  try {
+    const attempt = {
+      id: createLocalSaleId(),
+      created_at: new Date().toISOString(),
+      city: sale.city,
+      folio: sale.folio,
+      total: Number(sale.total || 0),
+      itemsCount: (sale.items || []).length,
+      status,
+      stage,
+      error: error ? String(error) : '',
+      supabaseId,
+      salePayload,
+      saleItemsPayload
+    }
+    writeSaveAttempts([attempt, ...readSaveAttempts()])
+  } catch (logError) {
+    console.error('[POS save attempt log] No se pudo guardar log local:', logError)
+  }
 }
 
 function createLocalSaleId() {
@@ -1248,6 +1400,7 @@ function normalizeLocalSaleForSync(sale) {
 async function saveSaleToSupabase(sale) {
   const existingSale = await findSaleByFolio(sale.folio)
   if (existingSale.data) {
+    await ensureExistingSaleItems(existingSale.data, sale)
     return {
       id: existingSale.data.id,
       created_at: existingSale.data.created_at,
@@ -1268,20 +1421,7 @@ async function saveSaleToSupabase(sale) {
   }
 
   const savedSale = saleResult.data
-  const saleItems = sale.items.map((item) => {
-    const subtotal = itemSubtotal(item)
-    return {
-      sale_id: savedSale.id,
-      category: item.category,
-      quantity: Number(item.quantity),
-      unit_price: Number(item.unitPrice),
-      subtotal,
-      line_total: subtotal,
-      material: item.material || null,
-      code_detected: normalizeCode(item.code_detected) || null,
-      capture_origin: item.capture_origin || 'manual'
-    }
-  })
+  const saleItems = buildSaleItemsPayload(savedSale.id, sale.items)
 
   const { data: savedItems, error: itemsError } = await insertSaleItemsWithCompatibleColumns(saleItems)
 
@@ -1300,6 +1440,40 @@ async function saveSaleToSupabase(sale) {
     storage: 'supabase',
     storageLabel: 'Guardada en Supabase'
   }
+}
+
+async function ensureExistingSaleItems(existingSale, sale) {
+  const expectedItems = buildSaleItemsPayload(existingSale.id, sale.items)
+  if (!expectedItems.length) return []
+
+  const { data: currentItems, error } = await supabase
+    .from('sale_items')
+    .select('id')
+    .eq('sale_id', existingSale.id)
+
+  if (error) {
+    const detail = isMissingSchemaError(error)
+      ? 'La tabla sale_items no existe o no esta expuesta en Supabase.'
+      : friendlySupabaseMessage(error)
+    throw new Error(`La venta ya existe, pero no se pudo revisar su detalle: ${detail}`)
+  }
+
+  if ((currentItems || []).length >= expectedItems.length) return currentItems
+
+  if ((currentItems || []).length > 0) {
+    throw new Error(`La venta ya existe con ${(currentItems || []).length} articulo(s), pero el respaldo local trae ${expectedItems.length}. No la marco como sincronizada para evitar duplicados.`)
+  }
+
+  const { data: savedItems, error: itemsError } = await insertSaleItemsWithCompatibleColumns(expectedItems)
+  if (itemsError) {
+    const detail = isMissingSchemaError(itemsError)
+      ? 'La tabla sale_items no existe o no esta expuesta en Supabase.'
+      : friendlySupabaseMessage(itemsError)
+    throw new Error(`La venta ya existia, pero no se pudieron recuperar sus articulos: ${detail}`)
+  }
+
+  await relateSaleItemsToInventory(savedItems || [])
+  return savedItems || []
 }
 
 function matchesCity(row, city) {

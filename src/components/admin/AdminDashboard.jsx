@@ -4,8 +4,10 @@ import {
   fetchInventoryData,
   fetchTodayAdminData,
   getPendingLocalSales,
+  getSaleSaveAttempts,
   importPartialV1Sales,
   markTicketSent,
+  retryPendingLocalSales,
   saveCashCut,
   saveExpense,
   saveHistoricalSalesEntry,
@@ -67,6 +69,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [ticketSearch, setTicketSearch] = useState('')
   const [pendingLocalSales, setPendingLocalSales] = useState([])
+  const [saveAttempts, setSaveAttempts] = useState([])
   const [cancelTarget, setCancelTarget] = useState(null)
   const [cancelReason, setCancelReason] = useState('')
   const [expenseForm, setExpenseForm] = useState({ category: EXPENSE_CATEGORIES[0], description: '', amount: '' })
@@ -108,6 +111,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setSummary(adminResult)
       setInventory(inventoryResult)
       setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city }), filters))
+      setSaveAttempts(getSaleSaveAttempts({ city }))
     } catch (loadError) {
       setError(loadError.message || 'No se pudo cargar el dashboard.')
     } finally {
@@ -131,6 +135,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
           setSummary(adminResult)
           setInventory(inventoryResult)
           setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city: eventCity.trim() }), filters))
+          setSaveAttempts(getSaleSaveAttempts({ city: eventCity.trim() }))
         }
       } catch (loadError) {
         if (alive) setError(loadError.message || 'No se pudo cargar el dashboard.')
@@ -330,6 +335,20 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError(saveError.message || 'No se pudo guardar venta historica.')
     } finally {
       setSavingHistorical(false)
+    }
+  }
+
+  async function retryFromAttempt() {
+    setError('')
+    setNotice('Reintentando ventas pendientes...')
+
+    try {
+      const result = await retryPendingLocalSales({ city: eventCity.trim() })
+      setNotice(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
+      await loadDashboard()
+    } catch (retryError) {
+      setError(retryError.message || 'No se pudo reintentar la sincronizacion.')
+      setSaveAttempts(getSaleSaveAttempts({ city: eventCity.trim() }))
     }
   }
 
@@ -753,6 +772,13 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 </div>
 
                 <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Ultimos intentos de guardado</h3><span style={styles.chip}>{saveAttempts.length}</span></div>
+                  {saveAttempts.length === 0 ? <div style={styles.empty}>Sin intentos registrados en este dispositivo.</div> : saveAttempts.slice(0, 8).map((attempt) => (
+                    <SaveAttemptCard key={attempt.id || `${attempt.folio}-${attempt.created_at}`} attempt={attempt} onRetry={retryFromAttempt} />
+                  ))}
+                </div>
+
+                <div style={styles.auditGroup}>
                   <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Gastos y cortes</h3><span style={styles.chip}>{summary.expenses.length + summary.cashCuts.length}</span></div>
                   {summary.expenses.slice(0, 4).map((expense) => <AuditInfoCard key={expense.id} title={expense.category} meta={expense.description || expense.city} value={money(expense.amount)} status="Gasto" />)}
                   {summary.cashCuts.slice(0, 3).map((cut) => <AuditInfoCard key={cut.id} title="Corte de caja" meta={cut.city || cityLabel} value={money(cut.difference)} status={cashCutStatus(cut.difference)} />)}
@@ -1087,6 +1113,39 @@ function AuditInfoCard({ title, meta, value, status }) {
           <small>{status}</small>
         </span>
       </div>
+    </article>
+  )
+}
+
+function SaveAttemptCard({ attempt, onRetry }) {
+  const createdAt = attempt.created_at
+    ? new Date(attempt.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+    : 'Sin hora'
+  const isError = attempt.status === 'error'
+  const statusLabel = attempt.status === 'synced' ? 'Sincronizada' : isError ? 'Error / pendiente' : attempt.status || 'Intento'
+  const itemInfo = `${attempt.itemsCount || 0} articulo(s) / ${attempt.stage || 'guardado'}`
+
+  return (
+    <article style={styles.auditCard}>
+      <div style={styles.auditMainStatic}>
+        <span style={styles.ticketInfo}>
+          <strong>{attempt.folio || 'Sin folio'}</strong>
+          <small>{createdAt} / {itemInfo}</small>
+          {attempt.error && <small style={styles.errorText}>{attempt.error}</small>}
+          {attempt.saleItemsPayload?.length > 0 && (
+            <small>{attempt.saleItemsPayload.map((item) => `${item.category || 'Sin categoria'} x${item.quantity} ${money(item.unit_price)}`).join(' / ')}</small>
+          )}
+          <details style={styles.debugDetails}>
+            <summary>Ver payload</summary>
+            <pre style={styles.debugPayload}>{JSON.stringify({ sale: attempt.salePayload, items: attempt.saleItemsPayload }, null, 2)}</pre>
+          </details>
+        </span>
+        <span style={styles.ticketRight}>
+          <strong>{money(attempt.total)}</strong>
+          <small>{statusLabel}</small>
+        </span>
+      </div>
+      {isError && <button type="button" style={styles.smallActionButton} onClick={onRetry}>Reintentar</button>}
     </article>
   )
 }
@@ -2598,6 +2657,9 @@ const styles = {
   ticketRow: { width: '100%', maxWidth: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, auto)', gap: 12, padding: '12px 0', border: 'none', borderTop: '1px solid #eeeeee', background: 'transparent', fontSize: 14, minWidth: 0, textAlign: 'left', boxSizing: 'border-box' },
   ticketInfo: { display: 'grid', gap: 3, minWidth: 0, overflow: 'hidden' },
   ticketRight: { display: 'grid', justifyItems: 'end', gap: 3, minWidth: 0, overflowWrap: 'anywhere', textAlign: 'right' },
+  errorText: { color: '#991b1b', fontWeight: 720, overflowWrap: 'anywhere' },
+  debugDetails: { marginTop: 6, minWidth: 0, color: '#333333', fontSize: 12 },
+  debugPayload: { margin: '8px 0 0', maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', border: '1px solid #e6e6e6', borderRadius: 12, background: '#ffffff', padding: 10, fontSize: 11, boxSizing: 'border-box' },
   detailBox: { border: '1px solid #111111', borderRadius: 20, padding: 14, display: 'grid', gap: 4, minWidth: 0, boxSizing: 'border-box' },
   itemStack: { display: 'grid', gap: 8, minWidth: 0, maxWidth: '100%', paddingTop: 8 },
   itemCard: { border: '1px solid #e6e6e6', borderRadius: 18, background: '#fbfbfb', padding: 12, display: 'grid', gap: 8, minWidth: 0, boxSizing: 'border-box' },
