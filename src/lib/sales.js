@@ -4,7 +4,6 @@ const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
 const LOCAL_BACKUPS_KEY = 'pos_chuladas_sale_backups_v1'
 const SAVE_ATTEMPTS_KEY = 'pos_chuladas_save_attempts'
 const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
-const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000
 const MAX_SAVE_ATTEMPTS = 40
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
 const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id', 'source', 'imported_partial', 'original_source_id', 'imported_at', 'import_notes', 'created_at']
@@ -93,7 +92,6 @@ export function getPendingLocalSales(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
   return readLocalSales()
     .filter((sale) => sale.pendingSync !== false)
-    .filter((sale) => sale.syncStatus !== 'syncing' || isStaleSync(sale))
     .filter((sale) => matchesCity(sale, cityFilter))
 }
 
@@ -190,6 +188,29 @@ export function getLocalSaleBackups(filters = {}) {
   })
 
   return [...merged.values()].sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
+}
+
+export function assertSalePersistence({ folio, localSaleId, city } = {}) {
+  const backups = getLocalSaleBackups({ city })
+  const backup = backups.find((item) => (
+    (folio && item.folio === folio) ||
+    (localSaleId && (item.localSaleId === localSaleId || item.id === localSaleId))
+  ))
+
+  if (!backup) {
+    throw new Error('No se pudo confirmar respaldo local de la venta. No abras WhatsApp ni limpies la venta.')
+  }
+
+  return backup
+}
+
+export function exportLocalSaleBackups(filters = {}) {
+  return {
+    exported_at: new Date().toISOString(),
+    device_session_id: getDeviceSessionId(),
+    backups: getLocalSaleBackups(filters),
+    attempts: getSaleSaveAttempts(filters)
+  }
 }
 
 export async function retryPendingLocalSales(filters = {}) {
@@ -1442,6 +1463,10 @@ function saveLocalSale(sale, reason, options = {}) {
   const currentSales = readLocalSales()
   const nextSales = [...currentSales.filter((sale) => sale.folio !== localSale.folio), localSale]
   writeLocalSales(nextSales)
+  const confirmed = readLocalSales().some((sale) => sale.folio === localSale.folio || sale.id === localSale.id)
+  if (!confirmed) {
+    throw new Error('No se pudo respaldar la venta en almacenamiento local.')
+  }
 
   return localSale
 }
@@ -1519,6 +1544,14 @@ function upsertSaleBackup(backup) {
     ...current.filter((item) => (item.localSaleId || item.id || item.folio) !== key && item.folio !== backup.folio)
   ]
   writeSaleBackups(next)
+  const confirmed = readSaleBackups().some((item) => (
+    item.localSaleId === backup.localSaleId ||
+    item.id === backup.id ||
+    item.folio === backup.folio
+  ))
+  if (!confirmed) {
+    throw new Error('No se pudo respaldar la venta en la boveda local.')
+  }
 }
 
 function markSaleBackupStatus(localSaleId, folio, updates) {
@@ -1592,11 +1625,6 @@ function getDeviceSessionId() {
   } catch {
     return ''
   }
-}
-
-function isStaleSync(sale) {
-  if (!sale.syncingAt) return true
-  return Date.now() - new Date(sale.syncingAt).getTime() > SYNC_LOCK_TIMEOUT_MS
 }
 
 function normalizeLocalSaleForSync(sale) {

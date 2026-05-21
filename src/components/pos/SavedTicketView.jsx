@@ -1,24 +1,29 @@
 import { money } from '../../lib/ticket'
 import { Panel, PrimaryButton, SecondaryButton, Stack, SummaryLine, Title, Kicker, styles as uiStyles } from './ui'
 
-export default function SavedTicketView({ sale, ticketText, onSendWhatsApp, onNewSale, onBack }) {
+export default function SavedTicketView({ sale, ticketText, error = '', onSendWhatsApp, onNewSale, onBack }) {
+  const isPending = sale.storage === 'local' || sale.backupStatus === 'pending' || sale.syncStatus === 'pending'
+  const statusLabel = isPending ? 'Pendiente local' : 'Sincronizada'
+
   return (
     <Panel>
       <Stack>
         <div>
-          <Kicker>{sale.storageLabel || 'Venta guardada'}</Kicker>
+          <Kicker>{statusLabel}</Kicker>
           <Title>{sale.folio}</Title>
         </div>
 
         <div style={uiStyles.summaryBox}>
+          <SummaryLine label="Estado" value={statusLabel} />
           <SummaryLine label="Total" value={money(sale.total)} />
           <SummaryLine label="Pago" value={sale.paymentMethod} />
           <SummaryLine label="Ciudad" value={sale.city} />
         </div>
 
         {sale.storage === 'local' && (
-          <div style={uiStyles.warningBox}>Modo local: {sale.storageReason || 'No se pudo confirmar Supabase.'}</div>
+          <div style={uiStyles.warningBox}>Venta pendiente de sincronizar, pero respaldada localmente. {sale.storageReason || ''}</div>
         )}
+        {error && <div style={uiStyles.warningBox}>{error}</div>}
 
         <pre style={uiStyles.ticketBox}>{ticketText}</pre>
 

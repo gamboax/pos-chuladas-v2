@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { fetchTodayAdminData, getPendingLocalSales, persistSaleDraftBeforeAnything, retryPendingLocalSales, saveSale } from '../lib/sales'
+import { assertSalePersistence, exportLocalSaleBackups, fetchTodayAdminData, getLocalSaleBackups, getPendingLocalSales, persistSaleDraftBeforeAnything, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
@@ -66,6 +66,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [pendingSyncMessage, setPendingSyncMessage] = useState('')
   const [isSyncingPending, setIsSyncingPending] = useState(false)
   const [pendingCount, setPendingCount] = useState(() => (draft.activeCity ? getPendingLocalSales({ city: draft.activeCity }).length : 0))
+  const [localBackupCount, setLocalBackupCount] = useState(() => (draft.activeCity ? getLocalSaleBackups({ city: draft.activeCity }).length : 0))
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
 
   const cashierName = user?.name || 'Cajera'
@@ -85,6 +86,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     }
 
     setPendingCount(getPendingLocalSales({ city: activeCity }).length)
+    setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
   }, [activeCity])
 
   useEffect(() => {
@@ -157,6 +159,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     setActiveCity(nextCity)
     setPendingCount(getPendingLocalSales({ city: nextCity }).length)
+    setLocalBackupCount(getLocalSaleBackups({ city: nextCity }).length)
     setFolio(createFolio(nextCity))
     resetSale({ keepCity: true })
     setScreen('cashier')
@@ -373,6 +376,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
           ticketText: buildTicket(draftTicketSale)
         }
       )
+      setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
       const saleForSave = {
         ...saleToSave,
         localSaleId: localBackup.localSaleId,
@@ -381,6 +385,11 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         ticketText: localBackup.ticketText
       }
       const savedSale = await saveSale(saleForSave)
+      const confirmedBackup = assertSalePersistence({
+        folio: saleForSave.folio,
+        localSaleId: saleForSave.localSaleId,
+        city: saleForSave.city
+      })
       const createdAt = savedSale.created_at ? new Date(savedSale.created_at) : savedAt
       const ticketSale = {
         ...saleForSave,
@@ -390,12 +399,14 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         storageReason: savedSale.storageReason || '',
         cashier: cashierName,
         customerPhone: saleToSave.customerWhatsapp,
+        localSaleId: saleForSave.localSaleId,
+        backupStatus: confirmedBackup.status || 'pending',
         date: createdAt.toLocaleDateString('es-MX'),
         time: createdAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
       }
 
       setLastSale(ticketSale)
-      if (ticketSale.storage === 'local') refreshPendingCount()
+      refreshPendingCount()
       clearDraft()
       resetSale()
       setScreen('saved')
@@ -426,6 +437,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
       const pending = getPendingLocalSales({ city: activeCity })
       setPendingSales(pending)
       setPendingCount(pending.length)
+      setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
       setPendingSyncMessage(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
     } catch (error) {
       setPendingSyncMessage(error.message || 'No se pudieron sincronizar las ventas pendientes.')
@@ -436,7 +448,30 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
   function sendWhatsApp() {
     if (!lastSale) return
+    try {
+      assertSalePersistence({
+        folio: lastSale.folio,
+        localSaleId: lastSale.localSaleId,
+        city: lastSale.city
+      })
+    } catch (error) {
+      setSaveError(error.message || 'No se pudo confirmar respaldo local. No abras WhatsApp todavia.')
+      return
+    }
     window.open(buildWhatsAppUrl(lastSale, ticketText), '_blank', 'noopener,noreferrer')
+  }
+
+  function exportEmergencyBackups() {
+    const payload = JSON.stringify(exportLocalSaleBackups({ city: activeCity }), null, 2)
+    const blob = new Blob([payload], { type: 'application/json;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `respaldo-emergencia-${activeCity || 'evento'}-${Date.now()}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
   if (screen === 'city') {
@@ -475,9 +510,11 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
           city={activeCity}
           isOnline={isOnline}
           pendingCount={pendingCount}
+          backupCount={localBackupCount}
           syncing={isSyncingPending}
           onOpenPending={openPendingSales}
           onRetry={retryPendingSales}
+          onExportEmergency={exportEmergencyBackups}
         />
       )}
 
@@ -598,6 +635,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         <SavedTicketView
           sale={lastSale}
           ticketText={ticketText}
+          error={saveError}
           onSendWhatsApp={sendWhatsApp}
           onNewSale={startNewSale}
           onBack={() => setScreen('cashier')}
@@ -722,8 +760,9 @@ function ScannerLoadingView({ activeCity, onBack }) {
   )
 }
 
-function EventSafetyBanner({ city, isOnline, pendingCount, syncing, onOpenPending, onRetry }) {
+function EventSafetyBanner({ city, isOnline, pendingCount, backupCount, syncing, onOpenPending, onRetry, onExportEmergency }) {
   const hasPending = pendingCount > 0
+  const hasBackups = backupCount > 0
 
   return (
     <section style={styles.eventBanner} aria-label="Estado del evento">
@@ -734,16 +773,20 @@ function EventSafetyBanner({ city, isOnline, pendingCount, syncing, onOpenPendin
           {isOnline ? 'En linea' : 'Sin conexion'}
         </span>
         <span style={styles.eventMeta}>{hasPending ? `${pendingCount} pendiente(s)` : 'Sin pendientes'}</span>
+        <span style={styles.eventMeta}>{hasBackups ? `${backupCount} respaldo(s)` : 'Sin respaldos'}</span>
       </div>
 
-      {hasPending && (
+      {(hasPending || hasBackups) && (
         <div style={styles.eventActions}>
-          <button type="button" style={styles.eventGhostButton} onClick={onOpenPending}>
+          {hasPending && <button type="button" style={styles.eventGhostButton} onClick={onOpenPending}>
             Ver
-          </button>
-          <button type="button" disabled={syncing || !isOnline} style={{ ...styles.eventRetryButton, opacity: syncing || !isOnline ? 0.55 : 1 }} onClick={onRetry}>
+          </button>}
+          {hasBackups && <button type="button" style={styles.eventGhostButton} onClick={onExportEmergency}>
+            Exportar
+          </button>}
+          {hasPending && <button type="button" disabled={syncing || !isOnline} style={{ ...styles.eventRetryButton, opacity: syncing || !isOnline ? 0.55 : 1 }} onClick={onRetry}>
             {syncing ? 'Sync...' : 'Reintentar'}
-          </button>
+          </button>}
         </div>
       )}
     </section>
