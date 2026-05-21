@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   cancelSale,
+  clearLocalEventBackups,
   fetchInventoryData,
   fetchTodayAdminData,
   getLocalSaleBackups,
@@ -14,7 +15,10 @@ import {
   saveExpense,
   saveHistoricalSalesEntry,
   savePurchaseLot,
-  savePurchaseLotItem
+  savePurchaseLotItem,
+  updateCashCutCorrection,
+  updateExpenseCorrection,
+  updateSaleCorrection
 } from '../../lib/sales'
 import { money } from '../../lib/ticket'
 
@@ -162,9 +166,9 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const metrics = useMemo(() => buildMetrics(activeSales, summary.expenses, summary.cashCuts), [activeSales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const operationalAnalytics = useMemo(() => buildOperationalAnalytics(activeSales, summary.expenses, inventory), [activeSales, summary.expenses, inventory])
-  const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses), [activeSales, summary.sales, summary.expenses])
+  const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses, inventory), [activeSales, summary.sales, summary.expenses, inventory])
   const visibleTickets = useMemo(() => filterTickets(activeSales, ticketSearch), [activeSales, ticketSearch])
-  const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill))) : null, [activeSales, summary.sales, summary.expenses, selectedCityDrill])
+  const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill)), inventory) : null, [activeSales, summary.sales, summary.expenses, inventory, selectedCityDrill])
   const operationsSales = useMemo(() => {
     const source = operationsCity ? summary.sales.filter((sale) => cityEquals(sale.city, operationsCity)) : summary.sales
     return source.slice().sort((a, b) => saleDate(b) - saleDate(a))
@@ -226,6 +230,79 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   async function handleCopySql(sql, label = 'SQL copiado.') {
     await navigator.clipboard?.writeText(sql)
     setNotice(label)
+  }
+
+  async function handleEditSaleBasic(sale) {
+    if (!isSuperAdmin || !sale?.id) return
+    const isHistorical = isHistoricalEstimatedSale(sale)
+    const city = window.prompt('Ciudad/evento', sale.city || '')
+    if (city === null) return
+    const paymentMethod = window.prompt('Metodo de pago', sale.payment_method || '')
+    if (paymentMethod === null) return
+    const dateValue = window.prompt('Fecha/hora ISO', sale.created_at || new Date().toISOString())
+    if (dateValue === null) return
+    let total = undefined
+    if (isHistorical) {
+      const totalValue = window.prompt('Total historico', String(sale.total || 0))
+      if (totalValue === null) return
+      total = Number(totalValue)
+    } else {
+      const ok = window.confirm('Esta venta tiene detalle operativo. Solo se corregiran ciudad, fecha y metodo. Para total de venta real usa una correccion controlada posterior.')
+      if (!ok) return
+    }
+    const auditNotes = window.prompt('Nota de auditoria', 'Correccion super_admin') || 'Correccion super_admin'
+
+    try {
+      await updateSaleCorrection(sale.id, {
+        city,
+        paymentMethod,
+        createdAt: dateValue,
+        total,
+        auditNotes
+      })
+      setNotice('Venta corregida.')
+      setSelectedTicket(null)
+      await loadDashboard()
+    } catch (editError) {
+      setError(editError.message || 'No se pudo corregir venta.')
+    }
+  }
+
+  async function handleEditExpenseBasic(expense) {
+    if (!isSuperAdmin || !expense?.id) return
+    const category = window.prompt('Categoria gasto', expense.category || '')
+    if (category === null) return
+    const description = window.prompt('Descripcion', expense.description || '')
+    if (description === null) return
+    const amount = window.prompt('Monto', String(expense.amount || 0))
+    if (amount === null) return
+    const paymentMethod = window.prompt('Metodo pago', expense.payment_method || 'Efectivo')
+    if (paymentMethod === null) return
+
+    try {
+      await updateExpenseCorrection(expense.id, { category, description, amount: Number(amount), paymentMethod })
+      setNotice('Gasto corregido.')
+      await loadDashboard()
+    } catch (editError) {
+      setError(editError.message || 'No se pudo corregir gasto.')
+    }
+  }
+
+  async function handleEditCashCutBasic(cut) {
+    if (!isSuperAdmin || !cut?.id) return
+    const cashCounted = window.prompt('Efectivo contado', String(cut.cash_counted ?? cut.counted_total ?? 0))
+    if (cashCounted === null) return
+    const notes = window.prompt('Notas', cut.notes || '')
+    if (notes === null) return
+    const difference = Number(cashCounted || 0) + Number(cut.cash_expenses || 0) - Number(cut.expected_cash || 0)
+
+    try {
+      await updateCashCutCorrection(cut.id, { cash_counted: Number(cashCounted), difference, notes })
+      setNotice('Corte corregido.')
+      await loadDashboard()
+    } catch (editError) {
+      setError(editError.message || 'No se pudo corregir corte.')
+    }
   }
 
   async function handleResendWhatsApp(sale) {
@@ -368,6 +445,20 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       attempts: saveAttempts
     }, null, 2)
     downloadText(`respaldos-locales-${eventCity.trim() || 'global'}-${Date.now()}.json`, payload, 'application/json;charset=utf-8;')
+  }
+
+  function clearCurrentLocalBackups() {
+    const city = eventCity.trim()
+    const first = window.confirm('Esto solo limpia respaldos locales de este dispositivo/evento. No borra ventas guardadas en Supabase.')
+    if (!first) return
+    const second = window.confirm(`Confirma limpiar respaldos locales de ${city || 'este evento'}. Usa Exportar respaldo JSON antes si tienes duda.`)
+    if (!second) return
+
+    const result = clearLocalEventBackups({ city })
+    setNotice(`${result.removed} respaldo(s) local(es) limpiado(s) de este dispositivo.`)
+    setLocalBackups(getLocalSaleBackups({ city }))
+    setPendingLocalSales(getPendingLocalSales({ city }))
+    setSaveAttempts(getSaleSaveAttempts({ city }))
   }
 
   async function handleSaveLot() {
@@ -557,6 +648,25 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               </>
             )}
 
+            {canManageOps && !isInvestor && (
+              <section style={styles.cleanSection}>
+                <div style={styles.sectionHead}>
+                  <h2 style={styles.sectionTitle}>Respaldo local</h2>
+                  <span style={styles.chip}>{localBackups.filter((backup) => backup.status !== 'synced').length} pendiente(s)</span>
+                </div>
+                <div style={styles.grid}>
+                  <Metric label="Pendientes" value={pendingLocalSales.length} />
+                  <Metric label="Respaldos" value={localBackups.length} />
+                </div>
+                <div style={styles.exportGrid}>
+                  <button type="button" style={styles.smallActionButton} onClick={retryFromAttempt} disabled={!localBackups.some((backup) => backup.status !== 'synced') && !pendingLocalSales.length}>Reintentar</button>
+                  <button type="button" style={styles.smallActionButton} onClick={exportLocalBackups} disabled={!localBackups.length}>Exportar JSON</button>
+                  <button type="button" style={styles.smallActionButton} onClick={clearCurrentLocalBackups} disabled={!localBackups.length && !pendingLocalSales.length}>Limpiar evento actual</button>
+                </div>
+                {localBackups.some((backup) => backup.status !== 'synced') && <div style={styles.error}>Hay ventas locales sin sincronizar en este dispositivo.</div>}
+              </section>
+            )}
+
             {usesMonthlyGlobalView && (
               <SuperAdminHierarchy
                 month={eventMonth}
@@ -576,6 +686,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 onBackTicket={() => setSelectedTicket(null)}
                 onCopyTicket={handleCopyTicket}
                 onResendWhatsApp={handleResendWhatsApp}
+                onEditTicket={handleEditSaleBasic}
                 periodMode={periodMode}
               />
             )}
@@ -615,6 +726,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={`${inventoryMetrics.roi.toFixed(1)}%`} />}
               </div>
               {metrics.partialSalesCount > 0 && <div style={styles.notice}>Utilidad estimada incluye regla 3x para ventas historicas sin detalle. Ventas reales sin costo quedan pendientes, no se estiman con 3x.</div>}
+              {canManageOps && !isSuperAdmin && <ProfitBreakdownPanel breakdown={metrics.profitBreakdown} title="Ver desglose utilidad" />}
             </section>
 
             <section style={styles.cleanSection}>
@@ -737,6 +849,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   isInvestor={isInvestor}
                   onCopy={handleCopyTicket}
                   onResendWhatsApp={handleResendWhatsApp}
+                  canEdit={isSuperAdmin}
+                  onEdit={handleEditSaleBasic}
                   onClose={() => setSelectedTicket(null)}
                 />
               )}
@@ -810,8 +924,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
                 <div style={styles.auditGroup}>
                   <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Gastos y cortes</h3><span style={styles.chip}>{summary.expenses.length + summary.cashCuts.length}</span></div>
-                  {summary.expenses.slice(0, 4).map((expense) => <AuditInfoCard key={expense.id} title={expense.category} meta={expense.description || expense.city} value={money(expense.amount)} status="Gasto" />)}
-                  {summary.cashCuts.slice(0, 3).map((cut) => <AuditInfoCard key={cut.id} title="Corte de caja" meta={cut.city || cityLabel} value={money(cut.difference)} status={cashCutStatus(cut.difference)} />)}
+                  {summary.expenses.slice(0, 4).map((expense) => <AuditInfoCard key={expense.id} title={expense.category} meta={expense.description || expense.city} value={money(expense.amount)} status="Gasto" actionLabel="Editar" onAction={() => handleEditExpenseBasic(expense)} />)}
+                  {summary.cashCuts.slice(0, 3).map((cut) => <AuditInfoCard key={cut.id} title="Corte de caja" meta={cut.city || cityLabel} value={money(cut.difference)} status={cashCutStatus(cut.difference)} actionLabel="Editar" onAction={() => handleEditCashCutBasic(cut)} />)}
                   {!summary.expenses.length && !summary.cashCuts.length && <div style={styles.empty}>Sin gastos ni cortes para auditar.</div>}
                 </div>
 
@@ -1130,7 +1244,7 @@ function AuditSaleCard({ sale, onSelect, onCancel }) {
   )
 }
 
-function AuditInfoCard({ title, meta, value, status }) {
+function AuditInfoCard({ title, meta, value, status, actionLabel = '', onAction }) {
   return (
     <article style={styles.auditCard}>
       <div style={styles.auditMainStatic}>
@@ -1143,6 +1257,7 @@ function AuditInfoCard({ title, meta, value, status }) {
           <small>{status}</small>
         </span>
       </div>
+      {actionLabel && <button type="button" style={styles.smallActionButton} onClick={onAction}>{actionLabel}</button>}
     </article>
   )
 }
@@ -1261,6 +1376,7 @@ function ManagerOperationsPanel({
           isInvestor={false}
           onCopy={onCopyTicket}
           onResendWhatsApp={onResendWhatsApp}
+          canEdit={false}
           onClose={onBackTicket}
           closeLabel="Volver a operaciones"
         />
@@ -1281,7 +1397,7 @@ function ManagerOperationsPanel({
   )
 }
 
-function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, onClose, closeLabel = 'Cerrar' }) {
+function TicketDetail({ sale, inventory, isInvestor, canEdit = false, onEdit, onCopy, onResendWhatsApp, onClose, closeLabel = 'Cerrar' }) {
   const detail = buildTicketAnalytics(sale, inventory)
   const items = saleItemsOf(sale)
   const timestamp = sale.created_at ? new Date(sale.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin fecha'
@@ -1329,6 +1445,7 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
       </div>
       <div style={styles.exportGrid}>
         <button type="button" style={styles.smallActionButton} onClick={() => onCopy?.(sale)}>Copiar ticket</button>
+        {canEdit && <button type="button" style={styles.smallActionButton} onClick={() => onEdit?.(sale)}>Editar</button>}
         {!isInvestor && sale.customer_whatsapp && <button type="button" style={styles.smallActionButton} onClick={() => onResendWhatsApp?.(sale)}>Reenviar WhatsApp</button>}
       </div>
     </section>
@@ -1370,7 +1487,8 @@ function SuperAdminHierarchy({
   onSelectTicket,
   onBackTicket,
   onCopyTicket,
-  onResendWhatsApp
+  onResendWhatsApp,
+  onEditTicket
 }) {
   const currentCityAnalytics = cityAnalytics || analytics
   const cityOperationRows = selectedCity ? operationsSales.filter((sale) => cityEquals(sale.city, selectedCity)) : []
@@ -1416,6 +1534,7 @@ function SuperAdminHierarchy({
               <Metric label="Gastos" value={money(analytics.totalExpenses)} />
             </div>
             {analytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye {analytics.partialSalesCount} venta(s) historicas parciales. Unidades calculadas solo con ventas con detalle. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
+            <ProfitBreakdownPanel breakdown={analytics.profitBreakdown} title="Ver desglose utilidad" />
             <button type="button" style={styles.primaryButton} onClick={() => openOperations('')}>Ver todas las operaciones</button>
           </section>
 
@@ -1459,6 +1578,7 @@ function SuperAdminHierarchy({
                 <Metric label="Clientes" value={currentCityAnalytics.customersCaptured} />
               </div>
               {currentCityAnalytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye ventas historicas parciales. Unidades y categorias solo usan tickets con articulos. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
+              <ProfitBreakdownPanel breakdown={currentCityAnalytics.profitBreakdown} title={`Ver desglose ${selectedCity}`} />
               <BreakdownGroup title="Metodos de pago" rows={currentCityAnalytics.paymentRows} moneyValues />
               <BreakdownGroup title="Categorias top" rows={currentCityAnalytics.categoryRows.map((row) => ({ name: row.name, value: row.sales, meta: `${row.quantity} pza(s)` }))} moneyValues />
               <div style={styles.itemStack}>
@@ -1498,6 +1618,8 @@ function SuperAdminHierarchy({
               isInvestor={isInvestor}
               onCopy={onCopyTicket}
               onResendWhatsApp={onResendWhatsApp}
+              canEdit={!isInvestor}
+              onEdit={onEditTicket}
               onClose={onBackTicket}
               closeLabel="Volver a operaciones"
             />
@@ -1536,6 +1658,7 @@ function ViewButton({ active, onClick, children }) {
 function CityDrillRow({ city, max, onOpen }) {
   const width = max > 0 ? Math.max(7, (city.totalSold / max) * 100) : 7
   const unitsLabel = city.detailedTickets ? `${city.unitsSold} pza(s)` : 'sin detalle articulos'
+  const margin = city.profitBreakdown?.marginNet || 0
 
   return (
     <button type="button" style={styles.drillRow} onClick={() => onOpen(city.city)}>
@@ -1547,6 +1670,7 @@ function CityDrillRow({ city, max, onOpen }) {
         <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
       </div>
       <small>{city.salesCount} ticket(s) / {unitsLabel} / Prom. {money(city.averageTicket)}</small>
+      <small>Bruta {money(city.grossProfit)} / Gastos {money(city.totalExpenses)} / Neta {money(city.netProfit)} / Margen {margin.toFixed(1)}%</small>
     </button>
   )
 }
@@ -1581,6 +1705,28 @@ function BreakdownGroup({ title, rows, moneyValues = false }) {
           {rows.slice(0, 12).map((row) => <DataRow key={row.name} label={row.meta ? `${row.name} / ${row.meta}` : row.name} value={moneyValues ? money(row.value) : row.value} />)}
         </div>
       )}
+    </details>
+  )
+}
+
+function ProfitBreakdownPanel({ breakdown, title = 'Ver desglose utilidad' }) {
+  if (!breakdown) return null
+
+  return (
+    <details style={styles.breakdownGroup}>
+      <summary style={styles.breakdownSummary}>{title}<span>{money(breakdown.netProfitTotal)}</span></summary>
+      <div style={styles.itemStack}>
+        <DataRow label="Venta total" value={money(breakdown.totalSold)} />
+        <DataRow label="Costo mercancia real" value={money(breakdown.realCost)} />
+        <DataRow label="Costo mercancia estimado" value={money(breakdown.estimatedCost)} />
+        <DataRow label="Venta sin costo pendiente" value={money(breakdown.pendingCostRevenue)} />
+        <DataRow label="Utilidad bruta real" value={money(breakdown.grossReal)} />
+        <DataRow label="Utilidad bruta estimada" value={money(breakdown.grossEstimated)} />
+        <DataRow label="Gastos reales" value={`-${money(breakdown.expenses)}`} />
+        <DataRow label="Utilidad neta real/estimada" value={money(breakdown.netProfitTotal)} strong />
+        <DataRow label="Margen neto" value={`${breakdown.marginNet.toFixed(1)}%`} />
+        <div style={styles.notice}>Formula: utilidad real = ventas con costo real - costo real. Utilidad estimada = historicos/parciales con regla 3x. Ventas reales sin costo quedan pendientes y no usan 3x.</div>
+      </div>
     </details>
   )
 }
@@ -2077,7 +2223,7 @@ function buildOperationalAnalytics(sales, expenses, inventory) {
   }
 }
 
-function buildMonthlyAnalytics(activeSales, allSales, expenses) {
+function buildMonthlyAnalytics(activeSales, allSales, expenses, inventory = {}) {
   const ticketSales = salesForTicketMetrics(activeSales)
   const salesCount = ticketSales.length
   const detailedSales = salesWithItemDetail(activeSales)
@@ -2085,8 +2231,9 @@ function buildMonthlyAnalytics(activeSales, allSales, expenses) {
   const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + saleTotal(sale), 0)
   const unitsSold = totalUnitsOfSales(detailedSales)
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-  const grossProfit = estimateSalesProfit(activeSales)
-  const cityRows = buildCityRows(activeSales, expenses)
+  const profitBreakdown = buildProfitBreakdown(activeSales, expenses, inventory)
+  const grossProfit = profitBreakdown.grossProfitTotal
+  const cityRows = buildCityRows(activeSales, expenses, inventory)
 
   return {
     salesCount,
@@ -2096,6 +2243,7 @@ function buildMonthlyAnalytics(activeSales, allSales, expenses) {
     detailedTickets: detailedSales.length,
     averageUnitsPerTicket: detailedSales.length ? unitsSold / detailedSales.length : null,
     partialSalesCount: activeSales.filter(isPartialWithoutItems).length,
+    profitBreakdown,
     customersCaptured: activeSales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length,
     grossProfit,
     netProfit: grossProfit - totalExpenses,
@@ -2110,7 +2258,7 @@ function buildMonthlyAnalytics(activeSales, allSales, expenses) {
   }
 }
 
-function buildCityRows(sales, expenses) {
+function buildCityRows(sales, expenses, inventory = {}) {
   const rows = new Map()
 
   sales.forEach((sale) => {
@@ -2138,7 +2286,8 @@ function buildCityRows(sales, expenses) {
       const detailedSales = salesWithItemDetail(row.sales)
       const unitsSold = totalUnitsOfSales(detailedSales)
       const cityExpenses = row.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-      const grossProfit = estimateSalesProfit(row.sales)
+      const profitBreakdown = buildProfitBreakdown(row.sales, row.expenses, inventory)
+      const grossProfit = profitBreakdown.grossProfitTotal
 
       return {
         city: row.city,
@@ -2149,8 +2298,9 @@ function buildCityRows(sales, expenses) {
         detailedTickets: detailedSales.length,
         averageUnitsPerTicket: detailedSales.length ? unitsSold / detailedSales.length : null,
         partialSalesCount: row.sales.filter(isPartialWithoutItems).length,
+        profitBreakdown,
         grossProfit,
-        netProfit: grossProfit - cityExpenses,
+        netProfit: profitBreakdown.netProfitTotal,
         totalExpenses: cityExpenses
       }
     })
@@ -2370,6 +2520,65 @@ function estimateSalesProfit(sales, inventory) {
   return sales.reduce((sum, sale) => sum + estimateSaleProfit(sale, inventory), 0)
 }
 
+function buildProfitBreakdown(sales, expenses, inventory = {}) {
+  const codeCosts = buildCodeCostMap(inventory)
+  const totals = {
+    totalSold: sales.reduce((sum, sale) => sum + saleTotal(sale), 0),
+    realRevenue: 0,
+    realCost: 0,
+    estimatedRevenue: 0,
+    estimatedCost: 0,
+    pendingCostRevenue: 0,
+    expenses: expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0),
+    partialSalesCount: sales.filter(isPartialWithoutItems).length
+  }
+
+  sales.forEach((sale) => {
+    const items = saleItemsOf(sale)
+    if (!items.length) {
+      if (isPartialWithoutItems(sale)) {
+        const total = saleTotal(sale)
+        totals.estimatedRevenue += total
+        totals.estimatedCost += total / 3
+      }
+      return
+    }
+
+    items.forEach((item) => {
+      const subtotal = itemLineTotal(item)
+      const quantity = Number(item.quantity || 0)
+      const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
+      if (unitCost > 0) {
+        totals.realRevenue += subtotal
+        totals.realCost += unitCost * quantity
+        return
+      }
+
+      if (isHistoricalEstimatedSale(sale)) {
+        totals.estimatedRevenue += subtotal
+        totals.estimatedCost += subtotal / 3
+        return
+      }
+
+      totals.pendingCostRevenue += subtotal
+    })
+  })
+
+  const grossReal = totals.realRevenue - totals.realCost
+  const grossEstimated = totals.estimatedRevenue - totals.estimatedCost
+  const grossProfitTotal = grossReal + grossEstimated
+  const netProfitTotal = grossProfitTotal - totals.expenses
+
+  return {
+    ...totals,
+    grossReal,
+    grossEstimated,
+    grossProfitTotal,
+    netProfitTotal,
+    marginNet: totals.totalSold > 0 ? (netProfitTotal / totals.totalSold) * 100 : 0
+  }
+}
+
 function estimateSaleProfit(sale, inventory = {}) {
   const items = saleItemsOf(sale)
   const codeCosts = buildCodeCostMap(inventory)
@@ -2382,6 +2591,7 @@ function estimateSaleProfit(sale, inventory = {}) {
     const subtotal = itemLineTotal(item)
     const quantity = Number(item.quantity || 0)
     const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
+    if (unitCost <= 0 && isHistoricalEstimatedSale(sale)) return sum + subtotal - subtotal / 3
     if (unitCost <= 0) return sum
     return sum + subtotal - unitCost * quantity
   }, 0)
@@ -2426,6 +2636,10 @@ function salesWithItemDetail(sales) {
 
 function isPartialWithoutItems(sale) {
   return isPartialImport(sale) && !saleHasItemDetail(sale)
+}
+
+function isHistoricalEstimatedSale(sale) {
+  return String(sale?.source || '').startsWith('manual_historical') || sale?.source === 'v1_import' || sale?.imported_partial === true || sale?.imported_partial === 'true'
 }
 
 function countsAsTicketMetric(sale) {
@@ -2503,12 +2717,13 @@ function buildMetrics(sales, expenses, cashCuts) {
   const expectedCash = cashSales
   const latestDifference = cashCuts.length ? Number(cashCuts[0].difference || 0) : 0
   const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
-  const grossProfit = estimateSalesProfit(sales)
-  const estimatedCost = Math.max(totalSold - grossProfit, 0)
+  const profitBreakdown = buildProfitBreakdown(sales, expenses)
+  const grossProfit = profitBreakdown.grossProfitTotal
+  const estimatedCost = profitBreakdown.realCost + profitBreakdown.estimatedCost
   const netProfit = grossProfit - totalExpenses
   const partialSalesCount = sales.filter(isPartialWithoutItems).length
 
-  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured, partialSalesCount }
+  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured, partialSalesCount, profitBreakdown }
 }
 
 function calculateCashCutDifference(cashCounted, expectedCash, cashExpenses) {

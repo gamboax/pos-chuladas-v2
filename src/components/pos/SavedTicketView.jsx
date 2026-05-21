@@ -23,6 +23,9 @@ export default function SavedTicketView({ sale, ticketText, error = '', onSendWh
         {sale.storage === 'local' && (
           <div style={uiStyles.warningBox}>Venta pendiente de sincronizar, pero respaldada localmente. {sale.storageReason || ''}</div>
         )}
+        {sale.storage !== 'local' && (
+          <div style={uiStyles.noticeBox || uiStyles.summaryBox}>Venta respaldada localmente y sincronizada.</div>
+        )}
         {error && <div style={uiStyles.warningBox}>{error}</div>}
 
         <pre style={uiStyles.ticketBox}>{ticketText}</pre>

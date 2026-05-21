@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { assertSalePersistence, exportLocalSaleBackups, fetchTodayAdminData, getLocalSaleBackups, getPendingLocalSales, persistSaleDraftBeforeAnything, retryPendingLocalSales, saveSale } from '../lib/sales'
+import { assertSalePersistence, exportLocalSaleBackups, fetchTodayAdminData, getLocalSaleBackups, getPendingLocalSales, recoverLocalSalesOnStartup, persistSaleDraftBeforeAnything, retryLocalSaleBackups, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
@@ -66,7 +66,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
   const [pendingSyncMessage, setPendingSyncMessage] = useState('')
   const [isSyncingPending, setIsSyncingPending] = useState(false)
   const [pendingCount, setPendingCount] = useState(() => (draft.activeCity ? getPendingLocalSales({ city: draft.activeCity }).length : 0))
-  const [localBackupCount, setLocalBackupCount] = useState(() => (draft.activeCity ? getLocalSaleBackups({ city: draft.activeCity }).length : 0))
+  const [localBackupCount, setLocalBackupCount] = useState(() => (draft.activeCity ? unsyncedBackupCount(draft.activeCity) : 0))
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine))
 
   const cashierName = user?.name || 'Cajera'
@@ -86,7 +86,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     }
 
     setPendingCount(getPendingLocalSales({ city: activeCity }).length)
-    setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
+    setLocalBackupCount(unsyncedBackupCount(activeCity))
   }, [activeCity])
 
   useEffect(() => {
@@ -104,6 +104,35 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
       customerType
     })
   }, [screen, activeCity, folio, cart, discountMode, customDiscount, paymentMethod, customerName, customerPhone, customerType])
+
+  useEffect(() => {
+    if (!activeCity || !isOnline) return
+
+    let alive = true
+    const timeout = window.setTimeout(async () => {
+      const backups = getLocalSaleBackups({ city: activeCity })
+      const unsynced = backups.filter((backup) => backup.status !== 'synced')
+      setLocalBackupCount(backups.filter((backup) => backup.status !== 'synced').length)
+      setPendingCount(getPendingLocalSales({ city: activeCity }).length)
+      if (!unsynced.length) return
+
+      setPendingSyncMessage('Recuperando respaldos locales...')
+      try {
+        const result = await recoverLocalSalesOnStartup({ city: activeCity })
+        if (!alive) return
+        setPendingSyncMessage(result.failed?.length ? `${result.synced.length} recuperada(s), ${result.failed.length} pendiente(s).` : 'Respaldos recuperados.')
+        setPendingCount(getPendingLocalSales({ city: activeCity }).length)
+        setLocalBackupCount(unsyncedBackupCount(activeCity))
+      } catch (error) {
+        if (alive) setPendingSyncMessage(error.message || 'Hay respaldos locales pendientes.')
+      }
+    }, 900)
+
+    return () => {
+      alive = false
+      window.clearTimeout(timeout)
+    }
+  }, [activeCity, isOnline])
 
   useEffect(() => {
     if (screen !== 'summary' || !activeCity) return
@@ -159,7 +188,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     setActiveCity(nextCity)
     setPendingCount(getPendingLocalSales({ city: nextCity }).length)
-    setLocalBackupCount(getLocalSaleBackups({ city: nextCity }).length)
+    setLocalBackupCount(unsyncedBackupCount(nextCity))
     setFolio(createFolio(nextCity))
     resetSale({ keepCity: true })
     setScreen('cashier')
@@ -376,7 +405,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
           ticketText: buildTicket(draftTicketSale)
         }
       )
-      setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
+      setLocalBackupCount(unsyncedBackupCount(activeCity))
       const saleForSave = {
         ...saleToSave,
         localSaleId: localBackup.localSaleId,
@@ -434,11 +463,14 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     try {
       const result = await retryPendingLocalSales({ city: activeCity })
+      const backupResult = await retryLocalSaleBackups({ city: activeCity })
       const pending = getPendingLocalSales({ city: activeCity })
       setPendingSales(pending)
       setPendingCount(pending.length)
-      setLocalBackupCount(getLocalSaleBackups({ city: activeCity }).length)
-      setPendingSyncMessage(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
+      setLocalBackupCount(unsyncedBackupCount(activeCity))
+      const synced = result.synced.length + backupResult.synced.length
+      const failed = result.failed.length + backupResult.failed.length
+      setPendingSyncMessage(failed ? `${synced} sincronizada(s), ${failed} pendiente(s).` : 'Pendientes y respaldos sincronizados.')
     } catch (error) {
       setPendingSyncMessage(error.message || 'No se pudieron sincronizar las ventas pendientes.')
     } finally {
@@ -455,8 +487,7 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         city: lastSale.city
       })
     } catch (error) {
-      setSaveError(error.message || 'No se pudo confirmar respaldo local. No abras WhatsApp todavia.')
-      return
+      setSaveError(`${error.message || 'No se pudo confirmar respaldo local.'} Envia WhatsApp solo si necesitas respaldo humano y exporta emergencia.`)
     }
     window.open(buildWhatsAppUrl(lastSale, ticketText), '_blank', 'noopener,noreferrer')
   }
@@ -763,9 +794,10 @@ function ScannerLoadingView({ activeCity, onBack }) {
 function EventSafetyBanner({ city, isOnline, pendingCount, backupCount, syncing, onOpenPending, onRetry, onExportEmergency }) {
   const hasPending = pendingCount > 0
   const hasBackups = backupCount > 0
+  const needsAttention = hasPending || hasBackups
 
   return (
-    <section style={styles.eventBanner} aria-label="Estado del evento">
+    <section style={{ ...styles.eventBanner, ...(needsAttention ? styles.eventBannerWarning : null) }} aria-label="Estado del evento">
       <div style={styles.eventBannerInfo}>
         <span style={styles.eventCity}>{city}</span>
         <span style={styles.eventMeta}>
@@ -903,6 +935,10 @@ function pendingSaleStatus(sale) {
   return 'Pendiente de sincronizar'
 }
 
+function unsyncedBackupCount(city) {
+  return getLocalSaleBackups({ city }).filter((backup) => backup.status !== 'synced').length
+}
+
 function createId(prefix) {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -985,6 +1021,11 @@ const styles = {
     gap: 9,
     boxSizing: 'border-box',
     backdropFilter: 'blur(10px)'
+  },
+  eventBannerWarning: {
+    border: '1px solid #dc2626',
+    background: '#fff1f2',
+    boxShadow: '0 10px 22px rgba(220, 38, 38, 0.1)'
   },
   eventBannerInfo: {
     display: 'flex',

@@ -118,6 +118,7 @@ export function persistSaleDraftBeforeAnything(sale, metadata = {}) {
     id: localSaleId,
     localSaleId,
     deviceSessionId,
+    checksum: saleChecksum(saleWithIds),
     created_at: createdAt,
     updated_at: new Date().toISOString(),
     city: saleWithIds.city,
@@ -190,6 +191,25 @@ export function getLocalSaleBackups(filters = {}) {
   return [...merged.values()].sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
 }
 
+export function getUnsyncedLocalBackups(filters = {}) {
+  return getLocalSaleBackups(filters).filter((backup) => backup.status !== 'synced')
+}
+
+export function clearLocalEventBackups(filters = {}) {
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  const before = readSaleBackups()
+  const removed = before.filter((backup) => matchesCity(backup, cityFilter))
+  const kept = before.filter((backup) => !matchesCity(backup, cityFilter))
+  writeSaleBackups(kept)
+
+  const localBefore = readLocalSales()
+  const localRemoved = localBefore.filter((sale) => matchesCity(sale, cityFilter))
+  const localKept = localBefore.filter((sale) => !matchesCity(sale, cityFilter))
+  writeLocalSales(localKept)
+
+  return { removed: removed.length + localRemoved.length }
+}
+
 export function assertSalePersistence({ folio, localSaleId, city } = {}) {
   const backups = getLocalSaleBackups({ city })
   const backup = backups.find((item) => (
@@ -198,7 +218,7 @@ export function assertSalePersistence({ folio, localSaleId, city } = {}) {
   ))
 
   if (!backup) {
-    throw new Error('No se pudo confirmar respaldo local de la venta. No abras WhatsApp ni limpies la venta.')
+    throw new Error('No se pudo confirmar respaldo local de la venta. Revisa recuperacion local o exporta emergencia.')
   }
 
   return backup
@@ -211,6 +231,17 @@ export function exportLocalSaleBackups(filters = {}) {
     backups: getLocalSaleBackups(filters),
     attempts: getSaleSaveAttempts(filters)
   }
+}
+
+export async function recoverLocalSalesOnStartup(filters = {}) {
+  if (!hasSupabaseConfig || !supabase) {
+    return { synced: [], failed: [], total: getUnsyncedLocalBackups(filters).length, skipped: true }
+  }
+
+  const unsynced = getUnsyncedLocalBackups(filters)
+  if (!unsynced.length) return { synced: [], failed: [], total: 0, skipped: false }
+
+  return retryLocalSaleBackups(filters)
 }
 
 export async function retryPendingLocalSales(filters = {}) {
@@ -521,6 +552,33 @@ export async function markTicketSent(saleId) {
 
   return result.data
 }
+
+export async function updateSaleCorrection(saleId, patch = {}) {
+  requireSupabase('corregir venta')
+  if (!saleId) throw new Error('Falta venta para corregir.')
+
+  const payload = {
+    audit_notes: patch.auditNotes || 'Correccion super_admin',
+    updated_at: new Date().toISOString()
+  }
+
+  if (patch.city !== undefined) payload.city = String(patch.city || '').trim()
+  if (patch.paymentMethod !== undefined) payload.payment_method = String(patch.paymentMethod || '').trim() || 'Sin metodo'
+  if (patch.createdAt !== undefined) payload.created_at = patch.createdAt
+  if (patch.total !== undefined) {
+    const total = Number(patch.total)
+    if (!Number.isFinite(total) || total < 0) throw new Error('Total invalido.')
+    payload.total = total
+    payload.subtotal = total
+    payload.discount_amount = 0
+    payload.discount_percent = 0
+  }
+
+  const result = await updateSaleWithCompatibleColumns(saleId, payload, ['audit_notes', 'updated_at', 'discount_percent'])
+  if (result.error) throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo corregir venta.')
+  return result.data || { id: saleId, ...payload }
+}
+
 export async function fetchInventoryData() {
   if (!hasSupabaseConfig || !supabase) {
     return {
@@ -620,6 +678,25 @@ export async function saveExpense(expense) {
   return result.data
 }
 
+export async function updateExpenseCorrection(expenseId, patch = {}) {
+  requireSupabase('corregir gasto')
+  if (!expenseId) throw new Error('Falta gasto para corregir.')
+
+  const payload = { updated_at: new Date().toISOString() }
+  if (patch.category !== undefined) payload.category = patch.category
+  if (patch.description !== undefined) payload.description = patch.description
+  if (patch.amount !== undefined) {
+    const amount = Number(patch.amount)
+    if (!Number.isFinite(amount) || amount < 0) throw new Error('Monto invalido.')
+    payload.amount = amount
+  }
+  if (patch.paymentMethod !== undefined) payload.payment_method = patch.paymentMethod
+
+  const result = await updateWithCompatibleColumns('expenses', expenseId, payload, ['updated_at'])
+  if (result.error) throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo corregir gasto.')
+  return result.data || { id: expenseId, ...payload }
+}
+
 export async function saveCashCut(cut) {
   requireSupabase('guardar corte de caja')
 
@@ -664,6 +741,24 @@ export async function saveCashCut(cut) {
     cash_expenses: result.data?.cash_expenses ?? cashExpenses,
     difference: result.data?.difference ?? result.data?.difference_amount ?? difference
   }
+}
+
+export async function updateCashCutCorrection(cutId, patch = {}) {
+  requireSupabase('corregir corte')
+  if (!cutId) throw new Error('Falta corte para corregir.')
+
+  const payload = { updated_at: new Date().toISOString() }
+  ;['cash_counted', 'expected_cash', 'cash_expenses', 'transfer_total', 'card_total', 'difference'].forEach((key) => {
+    if (patch[key] === undefined) return
+    const value = Number(patch[key])
+    if (!Number.isFinite(value)) throw new Error('Monto invalido en corte.')
+    payload[key] = value
+  })
+  if (patch.notes !== undefined) payload.notes = patch.notes
+
+  const result = await updateWithCompatibleColumns('cash_cuts', cutId, payload, ['updated_at'])
+  if (result.error) throw new Error(friendlySupabaseMessage(result.error) || 'No se pudo corregir corte.')
+  return result.data || { id: cutId, ...payload }
 }
 
 export async function savePurchaseLot(lot) {
@@ -1254,6 +1349,32 @@ async function updateSaleWithCompatibleColumns(saleId, payload, optionalColumns)
   return { data: null, error: new Error('No se pudo adaptar la actualizacion a las columnas disponibles en sales.') }
 }
 
+async function updateWithCompatibleColumns(tableName, rowId, payload, optionalColumns) {
+  let nextPayload = { ...payload }
+
+  for (let attempt = 0; attempt <= optionalColumns.length; attempt += 1) {
+    const { data, error } = await supabase
+      .from(tableName)
+      .update(nextPayload)
+      .eq('id', rowId)
+      .select('*')
+      .single()
+
+    if (!error) return { data, error: null }
+
+    const missingColumn = optionalColumns.find((column) => mentionsColumn(error, column))
+    if (missingColumn && Object.prototype.hasOwnProperty.call(nextPayload, missingColumn)) {
+      nextPayload = { ...nextPayload }
+      delete nextPayload[missingColumn]
+      continue
+    }
+
+    return { data: null, error }
+  }
+
+  return { data: null, error: new Error(`No se pudo adaptar la actualizacion en ${tableName}.`) }
+}
+
 async function fetchSaleItemsForSales(saleIds) {
   const baseColumns = ['id', 'sale_id', 'category', 'quantity', 'unit_price', 'subtotal', 'material', 'code_detected', 'capture_origin', 'created_at']
   let optionalColumns = ['unit_cost', 'estimated_profit', 'product_code_id', 'purchase_lot_item_id']
@@ -1604,6 +1725,25 @@ function recordSaleSaveAttempt({ status, stage, sale, salePayload, saleItemsPayl
   } catch (logError) {
     console.error('[POS save attempt log] No se pudo guardar log local:', logError)
   }
+}
+
+function saleChecksum(sale) {
+  const text = JSON.stringify({
+    folio: sale.folio,
+    city: sale.city,
+    total: sale.total,
+    items: (sale.items || []).map((item) => ({
+      category: item.category,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      code: item.code_detected
+    }))
+  })
+  let hash = 0
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(index)) | 0
+  }
+  return `chk-${Math.abs(hash).toString(16)}`
 }
 
 function createLocalSaleId() {
