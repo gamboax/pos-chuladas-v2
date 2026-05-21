@@ -8,6 +8,7 @@ import {
   markTicketSent,
   saveCashCut,
   saveExpense,
+  saveHistoricalSalesEntry,
   savePurchaseLot,
   savePurchaseLotItem
 } from '../../lib/sales'
@@ -16,6 +17,12 @@ import { money } from '../../lib/ticket'
 const EXPENSE_CATEGORIES = ['Renta del lugar', 'Gasolina', 'Comida', 'Pago de colaborador', 'Casetas', 'Otros']
 const PRODUCT_CATEGORIES = ['Anillo', 'Pulsera', 'Tobillera', 'Collar', 'Cadena', 'Dije', 'Rosario', 'Juego', 'Arete', 'Caja']
 const MATERIALS = ['Acero inoxidable', 'Oro laminado', 'Bano de rodio', 'Bano de plata']
+const PERIOD_OPTIONS = [
+  { value: 'month', label: 'Mensual' },
+  { value: 'quarter', label: 'Trimestral' },
+  { value: 'year', label: 'Anual' },
+  { value: 'all', label: 'Historico' }
+]
 const V1_IMPORT_SQL = `alter table public.sales add column if not exists source text;
 alter table public.sales add column if not exists imported_partial boolean not null default false;
 alter table public.sales add column if not exists original_source_id text;
@@ -51,6 +58,8 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [eventCity, setEventCity] = useState(defaultCity)
   const [eventDate, setEventDate] = useState(todayInputValue())
   const [eventMonth, setEventMonth] = useState(monthInputValue())
+  const [periodMode, setPeriodMode] = useState('month')
+  const [managerPeriodMode, setManagerPeriodMode] = useState('day')
   const [superView, setSuperView] = useState('month')
   const [managerView, setManagerView] = useState('dashboard')
   const [selectedCityDrill, setSelectedCityDrill] = useState('')
@@ -66,6 +75,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [lotForm, setLotForm] = useState({ name: '', supplier: '', purchasePlace: '', purchaseDate: todayInputValue(), totalInvestment: '', notes: '' })
   const [selectedLotId, setSelectedLotId] = useState('')
   const [lotItemForm, setLotItemForm] = useState({ code: '', category: PRODUCT_CATEGORIES[0], material: MATERIALS[0], quantityPurchased: '', unitCost: '', suggestedPrice: '' })
+  const [historicalForm, setHistoricalForm] = useState({ city: defaultCity || '', date: todayInputValue(), total: '', ticketsCount: '', paymentMethod: '', notes: '' })
   const [v1ImportText, setV1ImportText] = useState('')
   const [v1ImportCity, setV1ImportCity] = useState(defaultCity || '')
   const [v1ImportDate, setV1ImportDate] = useState(todayInputValue())
@@ -76,6 +86,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [savingCashCut, setSavingCashCut] = useState(false)
   const [savingLot, setSavingLot] = useState(false)
   const [savingLotItem, setSavingLotItem] = useState(false)
+  const [savingHistorical, setSavingHistorical] = useState(false)
   const [importingV1, setImportingV1] = useState(false)
   const [savingCancellation, setSavingCancellation] = useState(false)
   const [error, setError] = useState('')
@@ -89,14 +100,14 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
     try {
       const shouldLoadInventory = isSuperAdmin || isInvestor
-      const filters = usesMonthlyGlobalView ? { city, month } : { city, date }
+      const filters = dashboardFilters({ city, date, month, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
       const [adminResult, inventoryResult] = await Promise.all([
         fetchTodayAdminData(filters),
         shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
       ])
       setSummary(adminResult)
       setInventory(inventoryResult)
-      setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city }), { date, month, monthly: usesMonthlyGlobalView }))
+      setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city }), filters))
     } catch (loadError) {
       setError(loadError.message || 'No se pudo cargar el dashboard.')
     } finally {
@@ -111,7 +122,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError('')
       try {
         const shouldLoadInventory = isSuperAdmin || isInvestor
-        const filters = usesMonthlyGlobalView ? { city: eventCity.trim(), month: eventMonth } : { city: eventCity.trim(), date: eventDate }
+        const filters = dashboardFilters({ city: eventCity.trim(), date: eventDate, month: eventMonth, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
         const [adminResult, inventoryResult] = await Promise.all([
           fetchTodayAdminData(filters),
           shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
@@ -119,7 +130,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
         if (alive) {
           setSummary(adminResult)
           setInventory(inventoryResult)
-          setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city: eventCity.trim() }), { date: eventDate, month: eventMonth, monthly: usesMonthlyGlobalView }))
+          setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city: eventCity.trim() }), filters))
         }
       } catch (loadError) {
         if (alive) setError(loadError.message || 'No se pudo cargar el dashboard.')
@@ -132,7 +143,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       alive = false
       window.clearTimeout(timeout)
     }
-  }, [eventCity, eventDate, eventMonth, isSuperAdmin, isInvestor, usesMonthlyGlobalView])
+  }, [eventCity, eventDate, eventMonth, isSuperAdmin, isInvestor, usesMonthlyGlobalView, periodMode, managerPeriodMode])
 
 
   const activeSales = useMemo(() => summary.sales.filter((sale) => !isCancelledSale(sale)), [summary.sales])
@@ -141,9 +152,9 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const metrics = useMemo(() => buildMetrics(activeSales, summary.expenses, summary.cashCuts), [activeSales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const operationalAnalytics = useMemo(() => buildOperationalAnalytics(activeSales, summary.expenses, inventory), [activeSales, summary.expenses, inventory])
-  const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses, inventory), [activeSales, summary.sales, summary.expenses, inventory])
+  const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses), [activeSales, summary.sales, summary.expenses])
   const visibleTickets = useMemo(() => filterTickets(activeSales, ticketSearch), [activeSales, ticketSearch])
-  const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill)), inventory) : null, [activeSales, summary.sales, summary.expenses, inventory, selectedCityDrill])
+  const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill))) : null, [activeSales, summary.sales, summary.expenses, selectedCityDrill])
   const operationsSales = useMemo(() => {
     const source = operationsCity ? summary.sales.filter((sale) => cityEquals(sale.city, operationsCity)) : summary.sales
     return source.slice().sort((a, b) => saleDate(b) - saleDate(a))
@@ -152,7 +163,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const activeLotId = selectedLotId && inventory.lots.some((lot) => lot.id === selectedLotId) ? selectedLotId : inventory.lots[0]?.id || ''
   const cutDifference = calculateCashCutDifference(Number(cashCounted || 0), metrics.expectedCash, metrics.cashExpenses)
   const cityLabel = effectiveCity || 'Todas las ciudades'
-  const eventLabel = usesMonthlyGlobalView ? `Resumen mensual: ${monthLabel(eventMonth)}` : effectiveCity ? `Evento activo: ${effectiveCity}` : 'Vista general del dia'
+  const eventLabel = usesMonthlyGlobalView ? periodLabel(periodMode, eventMonth) : managerPeriodMode === 'month' ? `Resumen mensual: ${monthLabel(eventMonth)}` : effectiveCity ? `Evento activo: ${effectiveCity}` : 'Vista general del dia'
 
   async function handleCancelSale() {
     if (!isSuperAdmin || !cancelTarget || savingCancellation) return
@@ -288,6 +299,37 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError(saveError.message || 'No se pudo guardar el corte.')
     } finally {
       setSavingCashCut(false)
+    }
+  }
+
+  async function handleSaveHistoricalSale() {
+    if (!isSuperAdmin || savingHistorical) return
+    if (!historicalForm.city.trim() || !historicalForm.date || Number(historicalForm.total) <= 0) {
+      setError('Completa ciudad, fecha y total historico.')
+      return
+    }
+
+    setSavingHistorical(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const result = await saveHistoricalSalesEntry({
+        city: historicalForm.city.trim(),
+        date: historicalForm.date,
+        total: Number(historicalForm.total),
+        ticketsCount: historicalForm.ticketsCount,
+        paymentMethod: historicalForm.paymentMethod.trim() || 'Historico',
+        notes: historicalForm.notes.trim(),
+        cashierName: user?.name || 'Super admin'
+      })
+      setNotice(`${result.count} venta(s) historica(s) guardadas sin detalle de articulos.`)
+      setHistoricalForm((current) => ({ ...current, total: '', ticketsCount: '', notes: '' }))
+      await loadDashboard()
+    } catch (saveError) {
+      setError(saveError.message || 'No se pudo guardar venta historica.')
+    } finally {
+      setSavingHistorical(false)
     }
   }
 
@@ -443,9 +485,16 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   <h2 style={styles.sectionTitle}>Periodo</h2>
                   <span style={styles.chip}>{isInvestor ? 'Solo lectura' : 'Global'}</span>
                 </div>
+                <div style={styles.segmented}>
+                  {PERIOD_OPTIONS.map((option) => (
+                    <ViewButton key={option.value} active={periodMode === option.value} onClick={() => { setPeriodMode(option.value); setSuperView('month'); setSelectedCityDrill(''); setOperationsCity(''); setSelectedTicket(null) }}>
+                      {option.label}
+                    </ViewButton>
+                  ))}
+                </div>
                 <label style={styles.labelBlock}>
-                  Mes
-                  <input value={eventMonth} onChange={(event) => { setEventMonth(event.target.value); setSuperView('month'); setSelectedCityDrill(''); setOperationsCity(''); setSelectedTicket(null) }} type="month" style={styles.input} />
+                  Mes base
+                  <input value={eventMonth} onChange={(event) => { setEventMonth(event.target.value); setSuperView('month'); setSelectedCityDrill(''); setOperationsCity(''); setSelectedTicket(null) }} type="month" disabled={periodMode === 'all'} style={styles.input} />
                 </label>
               </section>
             ) : (
@@ -454,9 +503,19 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   Ciudad / evento
                   <input value={eventCity} onChange={(event) => { setEventCity(event.target.value); setSelectedTicket(null) }} placeholder="Ej. Matehuala" style={styles.input} />
                 </label>
+                {canManageOps && (
+                  <div style={styles.segmented}>
+                    <ViewButton active={managerPeriodMode === 'day'} onClick={() => { setManagerPeriodMode('day'); setManagerView('dashboard'); setSelectedTicket(null) }}>Dia</ViewButton>
+                    <ViewButton active={managerPeriodMode === 'month'} onClick={() => { setManagerPeriodMode('month'); setManagerView('dashboard'); setSelectedTicket(null) }}>Mensual</ViewButton>
+                  </div>
+                )}
                 <label style={styles.labelBlock}>
-                  Fecha
-                  <input value={eventDate} onChange={(event) => { setEventDate(event.target.value); setSelectedTicket(null) }} type="date" style={styles.input} />
+                  {managerPeriodMode === 'month' ? 'Mes' : 'Fecha'}
+                  {managerPeriodMode === 'month' ? (
+                    <input value={eventMonth} onChange={(event) => { setEventMonth(event.target.value); setSelectedTicket(null) }} type="month" style={styles.input} />
+                  ) : (
+                    <input value={eventDate} onChange={(event) => { setEventDate(event.target.value); setSelectedTicket(null) }} type="date" style={styles.input} />
+                  )}
                 </label>
               </>
             )}
@@ -480,6 +539,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 onBackTicket={() => setSelectedTicket(null)}
                 onCopyTicket={handleCopyTicket}
                 onResendWhatsApp={handleResendWhatsApp}
+                periodMode={periodMode}
               />
             )}
 
@@ -755,88 +815,110 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               <>
                 <section style={styles.cleanSection}>
                   <div style={styles.sectionHead}>
-                    <h2 style={styles.sectionTitle}>Importar ventas V1</h2>
-                    <span style={styles.chip}>Sales-only</span>
+                    <h2 style={styles.sectionTitle}>Agregar venta historica</h2>
+                    <span style={styles.chip}>Sin articulos</span>
                   </div>
-                  <div style={styles.notice}>Importa solo ventas. No crea sale_items, no toca inventario y marca imported_partial.</div>
-                  <input type="file" accept=".csv,text/csv" onChange={handleV1File} style={styles.input} />
-                  <textarea
-                    value={v1ImportText}
-                    onChange={(event) => { setV1ImportText(event.target.value); setV1ImportPreview(null); setV1ImportResult(null) }}
-                    placeholder="Pega CSV de sales V1"
-                    style={styles.textarea}
-                  />
+                  <div style={styles.notice}>Esta captura historica solo afecta venta total, tickets, ranking y pagos. No afecta unidades, categorias ni inventario.</div>
                   <div style={styles.twoColumns}>
-                    <input value={v1ImportCity} onChange={(event) => setV1ImportCity(event.target.value)} placeholder="Ciudad fallback" style={styles.input} />
-                    <input value={v1ImportDate} onChange={(event) => setV1ImportDate(event.target.value)} type="date" style={styles.input} />
+                    <input value={historicalForm.city} onChange={(event) => setHistoricalForm((current) => ({ ...current, city: event.target.value }))} placeholder="Ciudad" style={styles.input} />
+                    <input value={historicalForm.date} onChange={(event) => setHistoricalForm((current) => ({ ...current, date: event.target.value }))} type="date" style={styles.input} />
                   </div>
-                  <button type="button" style={styles.secondaryButton} onClick={handlePreviewV1Import} disabled={!v1ImportText.trim()}>
-                    Preview importacion
-                  </button>
-                  {v1ImportPreview && (
-                    <div style={styles.auditGroup}>
-                      <div style={styles.grid}>
-                        <Metric label="Validas" value={v1ImportPreview.validRows.length} />
-                        <Metric label="Duplicadas" value={v1ImportPreview.duplicateRows.length} />
-                        <Metric label="Errores" value={v1ImportPreview.errorRows.length} />
-                        <Metric label="Parciales" value={v1ImportPreview.validRows.length} />
-                      </div>
-                      <div style={styles.itemStack}>
-                        {v1ImportPreview.rows.slice(0, 6).map((row) => (
-                          <AuditInfoCard
-                            key={`${row.index}-${row.folio}`}
-                            title={row.folio || `Fila ${row.index}`}
-                            meta={`${row.city || 'Sin ciudad'} / ${row.createdAtLabel} / ${row.statusLabel}`}
-                            value={money(row.total)}
-                            status={row.warning || 'Import parcial'}
-                          />
-                        ))}
-                      </div>
-                      <div style={styles.exportGrid}>
-                        <button type="button" style={styles.smallActionButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales(2)}>
-                          {importingV1 ? 'Importando...' : 'Probar 2 filas'}
-                        </button>
-                        <button type="button" style={styles.primaryButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales()}>
-                          {importingV1 ? 'Importando...' : 'Importar todo'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {v1ImportResult && (
-                    <div style={styles.auditGroup}>
-                      <div style={styles.notice}>
-                        Importadas: {v1ImportResult.imported.length} / Duplicadas: {v1ImportResult.duplicated.length} / Errores: {v1ImportResult.errors.length} / Parciales: {v1ImportResult.partial}
-                      </div>
-                      {v1ImportResult.errors.length > 0 && (
-                        <details style={styles.breakdownGroup} open>
-                          <summary style={styles.breakdownSummary}>Errores por fila<span>{v1ImportResult.errors.length}</span></summary>
-                          <div style={styles.itemStack}>
-                            {v1ImportResult.errors.slice(0, 12).map((item, index) => (
-                              <AuditInfoCard
-                                key={`${item.folio || item.sale?.folio || 'fila'}-${index}`}
-                                title={item.folio || item.sale?.folio || `Fila ${item.row || index + 1}`}
-                                meta={`Fila ${item.row || item.sale?.index || '?'} / ${item.sale?.city || 'Sin ciudad'} / ${money(item.total || item.sale?.total || 0)}`}
-                                value="Error"
-                                status={item.error}
-                              />
-                            ))}
-                            {v1ImportResult.errors.length > 12 && <div style={styles.empty}>Mostrando 12 errores. Corrige el primero y vuelve a probar.</div>}
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  )}
-                  <details style={styles.breakdownGroup}>
-                    <summary style={styles.breakdownSummary}>Setup importador V1<span>SQL unico</span></summary>
-                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_SQL, 'Setup del importador copiado.')}>Copiar SQL</button>
-                    <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
-                  </details>
-                  <details style={styles.breakdownGroup}>
-                    <summary style={styles.breakdownSummary}>Fix puntual si es RLS/policies<span>SQL</span></summary>
-                    <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_RLS_SQL, 'SQL de permisos copiado.')}>Copiar SQL</button>
-                    <pre style={styles.ticketText}>{V1_IMPORT_RLS_SQL}</pre>
-                  </details>
+                  <input value={historicalForm.total} onChange={(event) => setHistoricalForm((current) => ({ ...current, total: event.target.value }))} placeholder="Total vendido" inputMode="decimal" type="number" min="0" style={styles.input} />
+                  <div style={styles.twoColumns}>
+                    <input value={historicalForm.ticketsCount} onChange={(event) => setHistoricalForm((current) => ({ ...current, ticketsCount: event.target.value }))} placeholder="Tickets opcional" inputMode="numeric" type="number" min="0" style={styles.input} />
+                    <input value={historicalForm.paymentMethod} onChange={(event) => setHistoricalForm((current) => ({ ...current, paymentMethod: event.target.value }))} placeholder="Metodo opcional" style={styles.input} />
+                  </div>
+                  <textarea value={historicalForm.notes} onChange={(event) => setHistoricalForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Nota opcional" style={styles.textarea} />
+                  <button type="button" style={styles.primaryButton} disabled={savingHistorical} onClick={handleSaveHistoricalSale}>{savingHistorical ? 'Guardando...' : 'Guardar historico'}</button>
                 </section>
+
+                <details style={styles.breakdownGroup}>
+                  <summary style={styles.breakdownSummary}>Importador avanzado CSV<span>V1</span></summary>
+                  <section style={styles.cleanSection}>
+                    <div style={styles.sectionHead}>
+                      <h2 style={styles.sectionTitle}>Importar ventas V1</h2>
+                      <span style={styles.chip}>Sales-only</span>
+                    </div>
+                    <div style={styles.notice}>Importa solo ventas. No crea sale_items, no toca inventario y marca imported_partial.</div>
+                    <input type="file" accept=".csv,text/csv" onChange={handleV1File} style={styles.input} />
+                    <textarea
+                      value={v1ImportText}
+                      onChange={(event) => { setV1ImportText(event.target.value); setV1ImportPreview(null); setV1ImportResult(null) }}
+                      placeholder="Pega CSV de sales V1"
+                      style={styles.textarea}
+                    />
+                    <div style={styles.twoColumns}>
+                      <input value={v1ImportCity} onChange={(event) => setV1ImportCity(event.target.value)} placeholder="Ciudad fallback" style={styles.input} />
+                      <input value={v1ImportDate} onChange={(event) => setV1ImportDate(event.target.value)} type="date" style={styles.input} />
+                    </div>
+                    <button type="button" style={styles.secondaryButton} onClick={handlePreviewV1Import} disabled={!v1ImportText.trim()}>
+                      Preview importacion
+                    </button>
+                    {v1ImportPreview && (
+                      <div style={styles.auditGroup}>
+                        <div style={styles.grid}>
+                          <Metric label="Validas" value={v1ImportPreview.validRows.length} />
+                          <Metric label="Duplicadas" value={v1ImportPreview.duplicateRows.length} />
+                          <Metric label="Errores" value={v1ImportPreview.errorRows.length} />
+                          <Metric label="Parciales" value={v1ImportPreview.validRows.length} />
+                        </div>
+                        <div style={styles.itemStack}>
+                          {v1ImportPreview.rows.slice(0, 6).map((row) => (
+                            <AuditInfoCard
+                              key={`${row.index}-${row.folio}`}
+                              title={row.folio || `Fila ${row.index}`}
+                              meta={`${row.city || 'Sin ciudad'} / ${row.createdAtLabel} / ${row.statusLabel}`}
+                              value={money(row.total)}
+                              status={row.warning || 'Import parcial'}
+                            />
+                          ))}
+                        </div>
+                        <div style={styles.exportGrid}>
+                          <button type="button" style={styles.smallActionButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales(2)}>
+                            {importingV1 ? 'Importando...' : 'Probar 2 filas'}
+                          </button>
+                          <button type="button" style={styles.primaryButton} disabled={!v1ImportPreview.validRows.length || importingV1} onClick={() => handleImportV1Sales()}>
+                            {importingV1 ? 'Importando...' : 'Importar todo'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {v1ImportResult && (
+                      <div style={styles.auditGroup}>
+                        <div style={styles.notice}>
+                          Importadas: {v1ImportResult.imported.length} / Duplicadas: {v1ImportResult.duplicated.length} / Errores: {v1ImportResult.errors.length} / Parciales: {v1ImportResult.partial}
+                        </div>
+                        {v1ImportResult.errors.length > 0 && (
+                          <details style={styles.breakdownGroup} open>
+                            <summary style={styles.breakdownSummary}>Errores por fila<span>{v1ImportResult.errors.length}</span></summary>
+                            <div style={styles.itemStack}>
+                              {v1ImportResult.errors.slice(0, 12).map((item, index) => (
+                                <AuditInfoCard
+                                  key={`${item.folio || item.sale?.folio || 'fila'}-${index}`}
+                                  title={item.folio || item.sale?.folio || `Fila ${item.row || index + 1}`}
+                                  meta={`Fila ${item.row || item.sale?.index || '?'} / ${item.sale?.city || 'Sin ciudad'} / ${money(item.total || item.sale?.total || 0)}`}
+                                  value="Error"
+                                  status={item.error}
+                                />
+                              ))}
+                              {v1ImportResult.errors.length > 12 && <div style={styles.empty}>Mostrando 12 errores. Corrige el primero y vuelve a probar.</div>}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
+                    <details style={styles.breakdownGroup}>
+                      <summary style={styles.breakdownSummary}>Setup importador V1<span>SQL unico</span></summary>
+                      <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_SQL, 'Setup del importador copiado.')}>Copiar SQL</button>
+                      <pre style={styles.ticketText}>{V1_IMPORT_SQL}</pre>
+                    </details>
+                    <details style={styles.breakdownGroup}>
+                      <summary style={styles.breakdownSummary}>Fix puntual si es RLS/policies<span>SQL</span></summary>
+                      <button type="button" style={styles.smallActionButton} onClick={() => handleCopySql(V1_IMPORT_RLS_SQL, 'SQL de permisos copiado.')}>Copiar SQL</button>
+                      <pre style={styles.ticketText}>{V1_IMPORT_RLS_SQL}</pre>
+                    </details>
+                  </section>
+                </details>
 
                 <section style={styles.cleanSection}>
                   <div style={styles.sectionHead}><h2 style={styles.sectionTitle}>Nuevo lote</h2></div>
@@ -1103,8 +1185,8 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
       <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
       <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
       <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
-      {partialImport && <DataRow label="Importacion" value="V1 parcial sin articulos" strong />}
-      {partialImport && <div style={styles.notice}>Venta importada sin detalle de artículos.</div>}
+      {partialImport && <DataRow label="Detalle" value={partialSaleLabel(sale)} strong />}
+      {partialImport && <div style={styles.notice}>{partialSaleLabel(sale)}.</div>}
       {sale.ticket_sent_at && <DataRow label="Ticket enviado" value={new Date(sale.ticket_sent_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })} />}
       {cancelled && <DataRow label="Motivo anulacion" value={cancellationReasonOf(sale) || 'Sin motivo'} strong />}
       <div style={styles.itemStack}>
@@ -1113,7 +1195,7 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
           <span style={styles.chip}>{items.length ? `${saleUnits(sale)} pza(s)` : 'Sin detalle'}</span>
         </div>
         {items.length === 0 ? (
-          <div style={styles.empty}>{partialImport ? 'Venta importada sin detalle de artículos.' : 'Esta venta no tiene detalle de articulos.'}</div>
+          <div style={styles.empty}>{partialImport ? `${partialSaleLabel(sale)}.` : 'Esta venta no tiene detalle de articulos.'}</div>
         ) : (
           items.map((item) => <TicketItemCard key={item.id || `${item.category}-${item.code_detected}-${item.quantity}`} item={item} inventory={inventory} />)
         )}
@@ -1152,6 +1234,7 @@ function TicketItemCard({ item, inventory }) {
 
 function SuperAdminHierarchy({
   month,
+  periodMode,
   activeView,
   setActiveView,
   selectedCity,
@@ -1188,7 +1271,7 @@ function SuperAdminHierarchy({
   return (
     <section style={styles.cleanSection}>
       <div style={styles.segmented}>
-        <ViewButton active={activeView === 'month'} onClick={() => { onBackTicket(); setActiveView('month'); setSelectedCity(''); setOperationsCity('') }}>Mes</ViewButton>
+        <ViewButton active={activeView === 'month'} onClick={() => { onBackTicket(); setActiveView('month'); setSelectedCity(''); setOperationsCity('') }}>Periodo</ViewButton>
         <ViewButton active={activeView === 'city'} onClick={() => { onBackTicket(); setActiveView('city') }}>Ciudad</ViewButton>
         <ViewButton active={activeView === 'operations'} onClick={() => setActiveView('operations')}>Operaciones</ViewButton>
         <ViewButton active={activeView === 'breakdown'} onClick={() => { onBackTicket(); setActiveView('breakdown') }}>Desglose</ViewButton>
@@ -1198,20 +1281,21 @@ function SuperAdminHierarchy({
         <>
           <section style={styles.cleanSection}>
             <div style={styles.sectionHead}>
-              <h2 style={styles.sectionTitle}>Resumen mensual</h2>
-              <span style={styles.chip}>{monthLabel(month)}</span>
+              <h2 style={styles.sectionTitle}>Resumen del periodo</h2>
+              <span style={styles.chip}>{periodLabel(periodMode, month)}</span>
             </div>
             <div style={styles.grid}>
               <Metric label="Venta mensual" value={money(analytics.totalSold)} />
               <Metric label="Tickets" value={analytics.salesCount} />
               <Metric label="Ticket promedio" value={money(analytics.averageTicket)} />
               <Metric label="Unidades" value={analytics.unitsSold} />
-              <Metric label="Unid/ticket" value={formatDecimal(analytics.averageUnitsPerTicket)} />
+              <Metric label="Unid/ticket" value={formatOptionalDecimal(analytics.averageUnitsPerTicket)} />
               <Metric label="Clientes" value={analytics.customersCaptured} />
               <Metric label="Utilidad bruta" value={money(analytics.grossProfit)} />
               <Metric label="Utilidad neta" value={money(analytics.netProfit)} />
               <Metric label="Gastos" value={money(analytics.totalExpenses)} />
             </div>
+            {analytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye {analytics.partialSalesCount} venta(s) historicas parciales. Unidades calculadas solo con ventas con detalle.</div>}
             <button type="button" style={styles.primaryButton} onClick={() => openOperations('')}>Ver todas las operaciones</button>
           </section>
 
@@ -1251,9 +1335,10 @@ function SuperAdminHierarchy({
                 <Metric label="Tickets" value={currentCityAnalytics.salesCount} />
                 <Metric label="Ticket promedio" value={money(currentCityAnalytics.averageTicket)} />
                 <Metric label="Unidades" value={currentCityAnalytics.unitsSold} />
-                <Metric label="Unid/ticket" value={formatDecimal(currentCityAnalytics.averageUnitsPerTicket)} />
+                <Metric label="Unid/ticket" value={formatOptionalDecimal(currentCityAnalytics.averageUnitsPerTicket)} />
                 <Metric label="Clientes" value={currentCityAnalytics.customersCaptured} />
               </div>
+              {currentCityAnalytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye ventas historicas parciales. Unidades y categorias solo usan tickets con articulos.</div>}
               <BreakdownGroup title="Metodos de pago" rows={currentCityAnalytics.paymentRows} moneyValues />
               <BreakdownGroup title="Categorias top" rows={currentCityAnalytics.categoryRows.map((row) => ({ name: row.name, value: row.sales, meta: `${row.quantity} pza(s)` }))} moneyValues />
               <div style={styles.itemStack}>
@@ -1285,7 +1370,7 @@ function SuperAdminHierarchy({
             <h2 style={styles.sectionTitle}>Operaciones</h2>
             <button type="button" style={styles.linkButton} onClick={() => setActiveView(operationsCity ? 'city' : 'month')}>Volver</button>
           </div>
-          <div style={styles.notice}>{operationsCity ? `Filtro: ${operationsCity}` : `Mes completo: ${monthLabel(month)}`}</div>
+          <div style={styles.notice}>{operationsCity ? `Filtro: ${operationsCity}` : periodLabel(periodMode, month)}</div>
           {selectedTicket ? (
             <TicketDetail
               sale={selectedTicket}
@@ -1310,11 +1395,11 @@ function SuperAdminHierarchy({
         <section style={styles.cleanSection}>
           <div style={styles.sectionHead}>
             <h2 style={styles.sectionTitle}>Desglose general</h2>
-            <span style={styles.chip}>{monthLabel(month)}</span>
+            <span style={styles.chip}>{periodLabel(periodMode, month)}</span>
           </div>
           <BreakdownGroup title="Por metodo de pago" rows={analytics.paymentRows} moneyValues />
           <BreakdownGroup title="Por categoria" rows={analytics.categoryRows.map((row) => ({ name: row.name, value: row.sales, meta: `${row.quantity} pza(s)` }))} moneyValues />
-          <BreakdownGroup title="Por ciudad" rows={analytics.cityRows.map((row) => ({ name: row.city, value: row.totalSold, meta: `${row.unitsSold} pza(s)` }))} moneyValues />
+          <BreakdownGroup title="Por ciudad" rows={analytics.cityRows.map((row) => ({ name: row.city, value: row.totalSold, meta: row.detailedTickets ? `${row.unitsSold} pza(s)` : 'sin detalle articulos' }))} moneyValues />
           <BreakdownGroup title="Por dia del mes" rows={analytics.dayRows} moneyValues />
           <BreakdownGroup title="Por cajero" rows={analytics.cashierRows} moneyValues />
           <BreakdownGroup title="Por estado de venta" rows={analytics.statusRows} />
@@ -1330,6 +1415,7 @@ function ViewButton({ active, onClick, children }) {
 
 function CityDrillRow({ city, max, onOpen }) {
   const width = max > 0 ? Math.max(7, (city.totalSold / max) * 100) : 7
+  const unitsLabel = city.detailedTickets ? `${city.unitsSold} pza(s)` : 'sin detalle articulos'
 
   return (
     <button type="button" style={styles.drillRow} onClick={() => onOpen(city.city)}>
@@ -1340,7 +1426,7 @@ function CityDrillRow({ city, max, onOpen }) {
       <div style={styles.miniBarTrack}>
         <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
       </div>
-      <small>{city.salesCount} ticket(s) / {city.unitsSold} pza(s) / Prom. {money(city.averageTicket)}</small>
+      <small>{city.salesCount} ticket(s) / {unitsLabel} / Prom. {money(city.averageTicket)}</small>
     </button>
   )
 }
@@ -1404,11 +1490,57 @@ function filterPendingByDate(sales, date) {
 }
 
 function filterPendingByPeriod(sales, filters) {
-  if (filters.monthly) {
+  if (filters.range?.start && filters.range?.end) {
+    const start = new Date(`${filters.range.start}T00:00:00`)
+    const end = new Date(`${filters.range.end}T23:59:59`)
+    return sales.filter((sale) => {
+      const date = new Date(sale.created_at)
+      return date >= start && date <= end
+    })
+  }
+
+  if (filters.month) {
     return sales.filter((sale) => new Date(sale.created_at).toISOString().slice(0, 7) === filters.month)
   }
 
   return filterPendingByDate(sales, filters.date)
+}
+
+function dashboardFilters({ city, date, month, global, periodMode, managerPeriodMode }) {
+  if (global) {
+    if (periodMode === 'month') return { city, month }
+    return { city, range: periodRange(periodMode, month) }
+  }
+
+  if (managerPeriodMode === 'month') return { city, month }
+  return { city, date }
+}
+
+function periodRange(mode, month) {
+  if (mode === 'all') return { start: '2000-01-01', end: '2100-01-01' }
+
+  const [yearValue, monthValue] = String(month || monthInputValue()).split('-').map(Number)
+  const year = yearValue || new Date().getFullYear()
+  const monthIndex = (monthValue || new Date().getMonth() + 1) - 1
+
+  if (mode === 'year') return { start: dateInputValue(new Date(year, 0, 1)), end: dateInputValue(new Date(year, 11, 31)) }
+
+  const quarterStartMonth = Math.floor(monthIndex / 3) * 3
+  return {
+    start: dateInputValue(new Date(year, quarterStartMonth, 1)),
+    end: dateInputValue(new Date(year, quarterStartMonth + 3, 0))
+  }
+}
+
+function periodLabel(mode, month) {
+  if (mode === 'all') return 'Historico completo'
+  if (mode === 'year') return `Anual ${String(month || monthInputValue()).slice(0, 4)}`
+  if (mode === 'quarter') {
+    const [, monthValue] = String(month || monthInputValue()).split('-').map(Number)
+    const quarter = Math.floor(((monthValue || new Date().getMonth() + 1) - 1) / 3) + 1
+    return `Trimestre ${quarter} / ${String(month || monthInputValue()).slice(0, 4)}`
+  }
+  return `Mensual ${monthLabel(month)}`
 }
 
 function ticketTimeLabel(sale) {
@@ -1423,7 +1555,7 @@ function buildDashboardTicket(sale) {
   if (items.length) {
     itemLines = items.map((item) => `${item.quantity} x ${[item.category, item.material, item.code_detected].filter(Boolean).join(' / ')} @ ${money(item.unit_price ?? item.unitPrice)} = ${money(itemLineTotal(item))}`).join('\n')
   } else if (isPartialImport(sale)) {
-    itemLines = 'Venta importada sin detalle de artículos.'
+    itemLines = partialSaleLabel(sale)
   }
 
   return `JOYERIA CHULADAS MAYOREO
@@ -1775,6 +1907,8 @@ function buildOperationalAnalytics(sales, expenses, inventory) {
     const date = saleDate(sale)
     return date >= twoHoursAgo && date < oneHourAgo
   })
+  const lastHourTicketSales = salesForTicketMetrics(lastHourSalesList)
+  const previousHourTicketSales = salesForTicketMetrics(previousHourSalesList)
   const totalSold = sales.reduce((sum, sale) => sum + saleTotal(sale), 0)
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
   const paymentTotals = groupPaymentTotals(sales)
@@ -1796,13 +1930,13 @@ function buildOperationalAnalytics(sales, expenses, inventory) {
     dominantPayment,
     paymentTotals,
     cityRanking,
-    lastHourSalesList,
-    previousHourSalesList
+    lastHourSalesList: lastHourTicketSales,
+    previousHourSalesList: previousHourTicketSales
   })
 
   return {
     lastHourSales: lastHourSalesList.reduce((sum, sale) => sum + saleTotal(sale), 0),
-    lastHourTickets: lastHourSalesList.length,
+    lastHourTickets: lastHourTicketSales.length,
     dominantPayment,
     topCategory,
     categoryRows,
@@ -1819,20 +1953,25 @@ function buildOperationalAnalytics(sales, expenses, inventory) {
   }
 }
 
-function buildMonthlyAnalytics(activeSales, allSales, expenses, inventory) {
-  const salesCount = activeSales.length
+function buildMonthlyAnalytics(activeSales, allSales, expenses) {
+  const ticketSales = salesForTicketMetrics(activeSales)
+  const salesCount = ticketSales.length
+  const detailedSales = salesWithItemDetail(activeSales)
   const totalSold = activeSales.reduce((sum, sale) => sum + saleTotal(sale), 0)
-  const unitsSold = totalUnitsOfSales(activeSales)
+  const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + saleTotal(sale), 0)
+  const unitsSold = totalUnitsOfSales(detailedSales)
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-  const grossProfit = estimateSalesProfit(activeSales, inventory)
-  const cityRows = buildCityRows(activeSales, expenses, inventory)
+  const grossProfit = estimateBasicGrossProfit(activeSales)
+  const cityRows = buildCityRows(activeSales, expenses)
 
   return {
     salesCount,
     totalSold,
-    averageTicket: salesCount ? totalSold / salesCount : 0,
+    averageTicket: salesCount ? ticketMetricTotal / salesCount : 0,
     unitsSold,
-    averageUnitsPerTicket: salesCount ? unitsSold / salesCount : 0,
+    detailedTickets: detailedSales.length,
+    averageUnitsPerTicket: detailedSales.length ? unitsSold / detailedSales.length : null,
+    partialSalesCount: activeSales.filter(isPartialWithoutItems).length,
     customersCaptured: activeSales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length,
     grossProfit,
     netProfit: grossProfit - totalExpenses,
@@ -1847,7 +1986,7 @@ function buildMonthlyAnalytics(activeSales, allSales, expenses, inventory) {
   }
 }
 
-function buildCityRows(sales, expenses, inventory) {
+function buildCityRows(sales, expenses) {
   const rows = new Map()
 
   sales.forEach((sale) => {
@@ -1869,18 +2008,23 @@ function buildCityRows(sales, expenses, inventory) {
   return [...rows.values()]
     .map((row) => {
       const totalSold = row.sales.reduce((sum, sale) => sum + saleTotal(sale), 0)
-      const salesCount = row.sales.length
-      const unitsSold = totalUnitsOfSales(row.sales)
+      const ticketSales = salesForTicketMetrics(row.sales)
+      const salesCount = ticketSales.length
+      const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + saleTotal(sale), 0)
+      const detailedSales = salesWithItemDetail(row.sales)
+      const unitsSold = totalUnitsOfSales(detailedSales)
       const cityExpenses = row.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-      const grossProfit = estimateSalesProfit(row.sales, inventory)
+      const grossProfit = estimateBasicGrossProfit(row.sales)
 
       return {
         city: row.city,
         salesCount,
         totalSold,
-        averageTicket: salesCount ? totalSold / salesCount : 0,
+        averageTicket: salesCount ? ticketMetricTotal / salesCount : 0,
         unitsSold,
-        averageUnitsPerTicket: salesCount ? unitsSold / salesCount : 0,
+        detailedTickets: detailedSales.length,
+        averageUnitsPerTicket: detailedSales.length ? unitsSold / detailedSales.length : null,
+        partialSalesCount: row.sales.filter(isPartialWithoutItems).length,
         grossProfit,
         netProfit: grossProfit - cityExpenses,
         totalExpenses: cityExpenses
@@ -1899,7 +2043,7 @@ function buildDayRows(sales) {
     const key = date.toISOString().slice(0, 10)
     const current = rows.get(key) || { name: date.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }), value: 0, meta: '0 ticket(s)' }
     current.value += saleTotal(sale)
-    current.tickets = Number(current.tickets || 0) + 1
+    current.tickets = Number(current.tickets || 0) + (countsAsTicketMetric(sale) ? 1 : 0)
     current.meta = `${current.tickets} ticket(s)`
     rows.set(key, current)
   })
@@ -1911,6 +2055,7 @@ function buildCashierRows(sales) {
   const rows = new Map()
 
   sales.forEach((sale) => {
+    if (!countsAsTicketMetric(sale)) return
     const name = sale.cashier_name || 'Sin cajero'
     const current = rows.get(name) || { name, value: 0, tickets: 0 }
     current.value += saleTotal(sale)
@@ -1983,7 +2128,7 @@ function buildHourlyStats(sales) {
     if (Number.isNaN(date.getTime())) return
     const hour = date.getHours()
     const current = rows.get(hour) || { hour, label: `${String(hour).padStart(2, '0')}:00`, tickets: 0, sales: 0 }
-    current.tickets += 1
+    current.tickets += countsAsTicketMetric(sale) ? 1 : 0
     current.sales += saleTotal(sale)
     rows.set(hour, current)
   })
@@ -1997,8 +2142,11 @@ function buildCityRanking(sales, totalExpenses) {
   sales.forEach((sale) => {
     const key = cityGroupKey(sale.city)
     const city = formatCityName(sale.city)
-    const current = rows.get(key) || { city, salesCount: 0, totalSold: 0, estimatedProfit: 0 }
-    current.salesCount += 1
+    const current = rows.get(key) || { city, salesCount: 0, ticketMetricTotal: 0, totalSold: 0, estimatedProfit: 0 }
+    if (countsAsTicketMetric(sale)) {
+      current.salesCount += 1
+      current.ticketMetricTotal += saleTotal(sale)
+    }
     current.totalSold += saleTotal(sale)
     current.estimatedProfit += estimateSaleProfit(sale)
     rows.set(key, current)
@@ -2009,7 +2157,7 @@ function buildCityRanking(sales, totalExpenses) {
     .map((city) => ({
       ...city,
       estimatedProfit: city.estimatedProfit - totalExpenses / cityCount,
-      averageTicket: city.salesCount ? city.totalSold / city.salesCount : 0
+      averageTicket: city.salesCount ? city.ticketMetricTotal / city.salesCount : 0
     }))
     .sort((a, b) => b.totalSold - a.totalSold)
 }
@@ -2093,13 +2241,19 @@ function estimateSalesProfit(sales, inventory) {
   return sales.reduce((sum, sale) => sum + estimateSaleProfit(sale, inventory), 0)
 }
 
+function estimateBasicGrossProfit(sales) {
+  return sales.reduce((sum, sale) => {
+    const total = saleTotal(sale)
+    return sum + total - total / 3
+  }, 0)
+}
+
 function estimateSaleProfit(sale, inventory = {}) {
   const items = saleItemsOf(sale)
   const codeCosts = buildCodeCostMap(inventory)
 
   if (!items.length) {
-    const total = saleTotal(sale)
-    return total - total / 3
+    return 0
   }
 
   return items.reduce((sum, item) => {
@@ -2127,6 +2281,26 @@ function buildCodeCostMap(inventory = {}) {
 
 function saleItemsOf(sale) {
   return sale.items || sale.sale_items || []
+}
+
+function saleHasItemDetail(sale) {
+  return saleItemsOf(sale).length > 0
+}
+
+function salesWithItemDetail(sales) {
+  return sales.filter(saleHasItemDetail)
+}
+
+function isPartialWithoutItems(sale) {
+  return isPartialImport(sale) && !saleHasItemDetail(sale)
+}
+
+function countsAsTicketMetric(sale) {
+  return sale?.source !== 'manual_historical'
+}
+
+function salesForTicketMetrics(sales) {
+  return sales.filter(countsAsTicketMetric)
 }
 
 function saleUnits(sale) {
@@ -2171,9 +2345,11 @@ function customerKey(sale) {
 }
 
 function buildMetrics(sales, expenses, cashCuts) {
-  const salesCount = sales.length
+  const ticketSales = salesForTicketMetrics(sales)
+  const salesCount = ticketSales.length
   const totalSold = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
-  const averageTicket = salesCount ? totalSold / salesCount : 0
+  const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+  const averageTicket = salesCount ? ticketMetricTotal / salesCount : 0
   const byPayment = sales.reduce((acc, sale) => {
     const method = sale.payment_method || sale.paymentMethod || 'Sin metodo'
     acc[method] = (acc[method] || 0) + Number(sale.total || 0)
@@ -2315,7 +2491,11 @@ function cashCutStatus(value) {
 }
 
 function todayInputValue() {
-  return new Date().toISOString().slice(0, 10)
+  return dateInputValue(new Date())
+}
+
+function dateInputValue(date) {
+  return date.toISOString().slice(0, 10)
 }
 
 function monthInputValue() {
@@ -2357,8 +2537,18 @@ function isPartialImport(sale) {
   return sale?.source === 'v1_import' || sale?.imported_partial === true || sale?.imported_partial === 'true'
 }
 
+function partialSaleLabel(sale) {
+  if (String(sale?.source || '').startsWith('manual_historical')) return 'Venta historica sin detalle de articulos'
+  return 'Venta importada sin detalle de articulos'
+}
+
 function formatDecimal(value) {
   return new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 }).format(Number(value) || 0)
+}
+
+function formatOptionalDecimal(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sin detalle'
+  return formatDecimal(value)
 }
 
 const styles = {

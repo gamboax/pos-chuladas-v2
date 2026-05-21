@@ -568,6 +568,88 @@ export async function importPartialV1Sales(sales) {
   }
 }
 
+export async function saveHistoricalSalesEntry(entry) {
+  requireSupabase('guardar ventas historicas')
+
+  const city = String(entry.city || '').trim()
+  const date = String(entry.date || '').trim()
+  const total = Number(entry.total || 0)
+  const ticketsCount = Math.max(0, Math.floor(Number(entry.ticketsCount || 0)))
+
+  if (!city) throw new Error('Escribe la ciudad de la venta historica.')
+  if (!date) throw new Error('Selecciona fecha de la venta historica.')
+  if (!Number.isFinite(total) || total <= 0) throw new Error('El total historico debe ser mayor a cero.')
+
+  const isDailySummary = ticketsCount > 0
+  const count = isDailySummary ? ticketsCount : 1
+  const source = isDailySummary ? 'manual_historical_daily' : 'manual_historical'
+  const importNotes = isDailySummary
+    ? 'Manual daily summary split into synthetic tickets; no item detail'
+    : 'Manual historical sale without item detail'
+  const baseFolio = historicalFolioPrefix(city, date)
+  const centsTotal = Math.round(total * 100)
+  const baseCents = Math.floor(centsTotal / count)
+  const remainder = centsTotal - baseCents * count
+  const now = new Date().toISOString()
+  const rows = []
+  const errors = []
+
+  for (let index = 0; index < count; index += 1) {
+    const rowCents = baseCents + (index < remainder ? 1 : 0)
+    const rowTotal = rowCents / 100
+    const folio = count === 1 ? baseFolio : `${baseFolio}-${String(index + 1).padStart(3, '0')}`
+    const payload = {
+      city,
+      folio,
+      cashier_id: null,
+      cashier_name: entry.cashierName || 'Historico',
+      operator_name: entry.operatorName || entry.cashierName || 'Historico',
+      local_sale_id: `historical-${folio}`,
+      device_session_id: getDeviceSessionId(),
+      subtotal: rowTotal,
+      discount_percent: 0,
+      discount_amount: 0,
+      discount: 0,
+      total: rowTotal,
+      payment_method: entry.paymentMethod || 'Historico',
+      customer_name: null,
+      customer_whatsapp: null,
+      customer_type: null,
+      status: 'completed',
+      source,
+      imported_partial: true,
+      original_source_id: `manual-${baseFolio}`,
+      imported_at: now,
+      import_notes: importNotes,
+      created_at: historicalCreatedAt(date, index)
+    }
+
+    const result = await insertSaleWithCompatibleColumns(payload, [
+      'operator_name',
+      'local_sale_id',
+      'device_session_id',
+      'source',
+      'imported_partial',
+      'original_source_id',
+      'imported_at',
+      'import_notes'
+    ])
+
+    if (result.error || result.localFallback) {
+      errors.push({ folio, error: result.error?.message || result.reason || 'No se pudo guardar venta historica.' })
+      continue
+    }
+
+    rows.push({ ...payload, ...result.data })
+  }
+
+  if (errors.length) {
+    throw new Error(`No se guardaron ${errors.length} venta(s) historicas. ${errors[0].folio}: ${errors[0].error}`)
+  }
+
+  return { rows, count: rows.length, source, importNotes }
+}
+
 function requireSupabase(action) {
   if (!hasSupabaseConfig || !supabase) {
     throw new Error(`Supabase no esta configurado para ${action}.`)
@@ -718,6 +800,20 @@ function normalizeImportDate(value) {
   const date = value ? new Date(value) : new Date()
   if (Number.isNaN(date.getTime())) return new Date().toISOString()
   return date.toISOString()
+}
+
+function historicalFolioPrefix(city, date) {
+  const prefix = normalizeCode(city).replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'HIS'
+  const cleanDate = String(date || '').replace(/\D/g, '') || new Date().toISOString().slice(0, 10).replace(/\D/g, '')
+  const suffix = Math.random().toString(16).slice(2, 6).toUpperCase()
+  return `HIS-${prefix}-${cleanDate}-${suffix}`
+}
+
+function historicalCreatedAt(date, index) {
+  const created = new Date(`${date}T12:00:00`)
+  if (Number.isNaN(created.getTime())) return new Date().toISOString()
+  created.setSeconds(index)
+  return created.toISOString()
 }
 
 async function insertSaleWithCompatibleColumns(payload, requiredColumns = []) {
