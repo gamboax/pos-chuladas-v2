@@ -3,10 +3,12 @@ import {
   cancelSale,
   fetchInventoryData,
   fetchTodayAdminData,
+  getLocalSaleBackups,
   getPendingLocalSales,
   getSaleSaveAttempts,
   importPartialV1Sales,
   markTicketSent,
+  retryLocalSaleBackups,
   retryPendingLocalSales,
   saveCashCut,
   saveExpense,
@@ -69,6 +71,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [selectedTicket, setSelectedTicket] = useState(null)
   const [ticketSearch, setTicketSearch] = useState('')
   const [pendingLocalSales, setPendingLocalSales] = useState([])
+  const [localBackups, setLocalBackups] = useState([])
   const [saveAttempts, setSaveAttempts] = useState([])
   const [cancelTarget, setCancelTarget] = useState(null)
   const [cancelReason, setCancelReason] = useState('')
@@ -111,6 +114,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setSummary(adminResult)
       setInventory(inventoryResult)
       setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city }), filters))
+      setLocalBackups(getLocalSaleBackups({ city }))
       setSaveAttempts(getSaleSaveAttempts({ city }))
     } catch (loadError) {
       setError(loadError.message || 'No se pudo cargar el dashboard.')
@@ -135,6 +139,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
           setSummary(adminResult)
           setInventory(inventoryResult)
           setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city: eventCity.trim() }), filters))
+          setLocalBackups(getLocalSaleBackups({ city: eventCity.trim() }))
           setSaveAttempts(getSaleSaveAttempts({ city: eventCity.trim() }))
         }
       } catch (loadError) {
@@ -343,13 +348,26 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
     setNotice('Reintentando ventas pendientes...')
 
     try {
-      const result = await retryPendingLocalSales({ city: eventCity.trim() })
-      setNotice(result.failed.length ? `${result.synced.length} sincronizada(s), ${result.failed.length} pendiente(s).` : 'Pendientes sincronizadas.')
+      const pendingResult = await retryPendingLocalSales({ city: eventCity.trim() })
+      const backupResult = await retryLocalSaleBackups({ city: eventCity.trim() })
+      const synced = pendingResult.synced.length + backupResult.synced.length
+      const failed = pendingResult.failed.length + backupResult.failed.length
+      setNotice(failed ? `${synced} sincronizada(s), ${failed} pendiente(s).` : 'Pendientes y respaldos sincronizados.')
       await loadDashboard()
     } catch (retryError) {
       setError(retryError.message || 'No se pudo reintentar la sincronizacion.')
       setSaveAttempts(getSaleSaveAttempts({ city: eventCity.trim() }))
     }
+  }
+
+  function exportLocalBackups() {
+    const payload = JSON.stringify({
+      exported_at: new Date().toISOString(),
+      city: eventCity.trim() || 'global',
+      backups: localBackups,
+      attempts: saveAttempts
+    }, null, 2)
+    downloadText(`respaldos-locales-${eventCity.trim() || 'global'}-${Date.now()}.json`, payload, 'application/json;charset=utf-8;')
   }
 
   async function handleSaveLot() {
@@ -773,6 +791,17 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 </div>
 
                 <div style={styles.auditGroup}>
+                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Recuperar ventas locales</h3><span style={styles.chip}>{localBackups.length}</span></div>
+                  <div style={styles.exportGrid}>
+                    <button type="button" style={styles.smallActionButton} onClick={retryFromAttempt} disabled={!localBackups.some((backup) => backup.status !== 'synced')}>Forzar sincronizacion</button>
+                    <button type="button" style={styles.smallActionButton} onClick={exportLocalBackups} disabled={!localBackups.length}>Exportar respaldo JSON</button>
+                  </div>
+                  {localBackups.length === 0 ? <div style={styles.empty}>Sin respaldos locales en este dispositivo.</div> : localBackups.slice(0, 10).map((backup) => (
+                    <LocalBackupCard key={backup.localSaleId || backup.id || backup.folio} backup={backup} />
+                  ))}
+                </div>
+
+                <div style={styles.auditGroup}>
                   <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Ultimos intentos de guardado</h3><span style={styles.chip}>{saveAttempts.length}</span></div>
                   {saveAttempts.length === 0 ? <div style={styles.empty}>Sin intentos registrados en este dispositivo.</div> : saveAttempts.slice(0, 8).map((attempt) => (
                     <SaveAttemptCard key={attempt.id || `${attempt.folio}-${attempt.created_at}`} attempt={attempt} onRetry={retryFromAttempt} />
@@ -1147,6 +1176,37 @@ function SaveAttemptCard({ attempt, onRetry }) {
         </span>
       </div>
       {isError && <button type="button" style={styles.smallActionButton} onClick={onRetry}>Reintentar</button>}
+    </article>
+  )
+}
+
+function LocalBackupCard({ backup }) {
+  const createdAt = backup.created_at
+    ? new Date(backup.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })
+    : 'Sin hora'
+  const statusLabel = backup.status === 'synced' ? 'Sincronizada' : backup.status === 'error' ? 'Error / pendiente' : 'Pendiente'
+  const items = backup.saleItemsPayload || []
+
+  return (
+    <article style={styles.auditCard}>
+      <div style={styles.auditMainStatic}>
+        <span style={styles.ticketInfo}>
+          <strong>{backup.folio || 'Sin folio'}</strong>
+          <small>{createdAt} / {backup.itemsCount || items.length || 0} articulo(s)</small>
+          {backup.error && <small style={styles.errorText}>{backup.error}</small>}
+          {items.length > 0 && <small>{items.map((item) => `${item.category || 'Sin categoria'} x${item.quantity} ${money(item.unit_price)}`).join(' / ')}</small>}
+          {backup.ticketText && (
+            <details style={styles.debugDetails}>
+              <summary>Ticket respaldado</summary>
+              <pre style={styles.debugPayload}>{backup.ticketText}</pre>
+            </details>
+          )}
+        </span>
+        <span style={styles.ticketRight}>
+          <strong>{money(backup.total)}</strong>
+          <small>{statusLabel}</small>
+        </span>
+      </div>
     </article>
   )
 }
@@ -1645,7 +1705,11 @@ function buildDashboardWhatsAppUrl(sale) {
 
 function downloadCsv(filename, rows) {
   const csv = rowsToCsv(rows)
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  downloadText(filename, csv, 'text/csv;charset=utf-8;')
+}
+
+function downloadText(filename, text, type = 'text/plain;charset=utf-8;') {
+  const blob = new Blob([text], { type })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

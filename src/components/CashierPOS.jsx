@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { fetchTodayAdminData, getPendingLocalSales, retryPendingLocalSales, saveSale } from '../lib/sales'
+import { fetchTodayAdminData, getPendingLocalSales, persistSaleDraftBeforeAnything, retryPendingLocalSales, saveSale } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
@@ -355,10 +355,35 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
     }
 
     try {
-      const savedSale = await saveSale(saleToSave)
+      const draftTicketSale = {
+        ...saleToSave,
+        cashier: cashierName,
+        customerPhone: saleToSave.customerWhatsapp,
+        date: savedAt.toLocaleDateString('es-MX'),
+        time: savedAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+      }
+      const localBackup = persistSaleDraftBeforeAnything(
+        {
+          ...saleToSave,
+          createdAt: savedAt.toISOString(),
+          ticketText: buildTicket(draftTicketSale)
+        },
+        {
+          stage: 'cashier_before_supabase',
+          ticketText: buildTicket(draftTicketSale)
+        }
+      )
+      const saleForSave = {
+        ...saleToSave,
+        localSaleId: localBackup.localSaleId,
+        clientSaleId: localBackup.localSaleId,
+        createdAt: localBackup.created_at,
+        ticketText: localBackup.ticketText
+      }
+      const savedSale = await saveSale(saleForSave)
       const createdAt = savedSale.created_at ? new Date(savedSale.created_at) : savedAt
       const ticketSale = {
-        ...saleToSave,
+        ...saleForSave,
         id: savedSale.id,
         storage: savedSale.storage || 'supabase',
         storageLabel: savedSale.storageLabel || 'Guardada en Supabase',

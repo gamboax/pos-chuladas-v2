@@ -1,6 +1,7 @@
 import { hasSupabaseConfig, supabase } from '../supabase'
 
 const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
+const LOCAL_BACKUPS_KEY = 'pos_chuladas_sale_backups_v1'
 const SAVE_ATTEMPTS_KEY = 'pos_chuladas_save_attempts'
 const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
 const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000
@@ -16,12 +17,16 @@ let pendingSyncInFlight = false
 
 export async function saveSale(sale) {
   const safeSale = normalizeSaleForPersistence(sale)
+  const guaranteedBackup = persistSaleDraftBeforeAnything(safeSale, {
+    stage: 'saveSale_entry',
+    ticketText: sale.ticketText || ''
+  })
   const salePayload = buildSalePayload(safeSale)
   const saleItemsPayload = buildSaleItemsPayload('pending-sale-id', safeSale.items)
   const localBackup = saveLocalSale(
-    safeSale,
+    { ...safeSale, localSaleId: guaranteedBackup.localSaleId, clientSaleId: guaranteedBackup.localSaleId },
     hasSupabaseConfig && supabase ? 'Respaldo local antes de sincronizar.' : 'Supabase no esta configurado en este entorno.',
-    { syncStatus: hasSupabaseConfig && supabase ? 'syncing' : 'pending', syncError: '' }
+    { syncStatus: 'pending', syncError: '' }
   )
 
   recordSaleSaveAttempt({
@@ -48,6 +53,12 @@ export async function saveSale(sale) {
       saleItemsPayload,
       supabaseId: savedSale.id
     })
+    markSaleBackupStatus(guaranteedBackup.localSaleId, safeSale.folio, {
+      status: 'synced',
+      supabaseId: savedSale.id,
+      error: '',
+      syncedAt: new Date().toISOString()
+    })
     return savedSale
   } catch (error) {
     const message = error.message || 'No se pudo sincronizar la venta.'
@@ -59,6 +70,10 @@ export async function saveSale(sale) {
       sale: safeSale,
       salePayload,
       saleItemsPayload,
+      error: message
+    })
+    markSaleBackupStatus(guaranteedBackup.localSaleId, safeSale.folio, {
+      status: 'pending',
       error: message
     })
     return pendingSale || localBackup
@@ -87,6 +102,94 @@ export function getSaleSaveAttempts(filters = {}) {
   return readSaveAttempts()
     .filter((attempt) => matchesCity(attempt, cityFilter))
     .slice(0, MAX_SAVE_ATTEMPTS)
+}
+
+export function persistSaleDraftBeforeAnything(sale, metadata = {}) {
+  const safeSale = normalizeSaleForPersistence(sale)
+  const localSaleId = safeSale.localSaleId || safeSale.clientSaleId || createLocalSaleId()
+  const createdAt = safeSale.createdAt || safeSale.created_at || new Date().toISOString()
+  const deviceSessionId = getDeviceSessionId()
+  const saleWithIds = {
+    ...safeSale,
+    localSaleId,
+    clientSaleId: localSaleId,
+    createdAt,
+    deviceSessionId
+  }
+  const backup = {
+    id: localSaleId,
+    localSaleId,
+    deviceSessionId,
+    created_at: createdAt,
+    updated_at: new Date().toISOString(),
+    city: saleWithIds.city,
+    folio: saleWithIds.folio,
+    total: saleWithIds.total,
+    itemsCount: saleWithIds.items.length,
+    status: metadata.status || 'pending',
+    stage: metadata.stage || 'local_backup',
+    error: metadata.error || '',
+    supabaseId: metadata.supabaseId || '',
+    ticketText: metadata.ticketText || sale.ticketText || '',
+    sale: saleWithIds,
+    salePayload: buildSalePayload(saleWithIds),
+    saleItemsPayload: buildSaleItemsPayload('pending-sale-id', saleWithIds.items)
+  }
+
+  upsertSaleBackup(backup)
+  return backup
+}
+
+export function getLocalSaleBackups(filters = {}) {
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  const backups = readSaleBackups().filter((sale) => matchesCity(sale, cityFilter))
+  const localSales = readLocalSales()
+    .filter((sale) => matchesCity(sale, cityFilter))
+    .map((sale) => {
+      try {
+        const safeSale = normalizeSaleForPersistence(sale)
+        return {
+          id: sale.localSaleId || sale.clientSaleId || sale.id || sale.folio,
+          localSaleId: sale.localSaleId || sale.clientSaleId || sale.id,
+          created_at: sale.created_at,
+          updated_at: sale.updated_at || sale.created_at,
+          city: sale.city,
+          folio: sale.folio,
+          total: Number(sale.total || 0),
+          itemsCount: (sale.items || []).length,
+          status: sale.pendingSync === false ? 'synced' : sale.syncStatus || 'pending',
+          error: sale.syncError || sale.storageReason || '',
+          sale: safeSale,
+          salePayload: buildSalePayload(safeSale),
+          saleItemsPayload: buildSaleItemsPayload('pending-sale-id', safeSale.items)
+        }
+      } catch (error) {
+        return {
+          id: sale.localSaleId || sale.clientSaleId || sale.id || sale.folio || createLocalSaleId(),
+          localSaleId: sale.localSaleId || sale.clientSaleId || sale.id,
+          created_at: sale.created_at || new Date().toISOString(),
+          updated_at: sale.updated_at || sale.created_at || new Date().toISOString(),
+          city: sale.city,
+          folio: sale.folio,
+          total: Number(sale.total || 0),
+          itemsCount: (sale.items || []).length,
+          status: 'error',
+          error: error.message || 'Respaldo local invalido.',
+          sale,
+          salePayload: sale,
+          saleItemsPayload: []
+        }
+      }
+    })
+  const merged = new Map()
+
+  ;[...backups, ...localSales].forEach((backup) => {
+    const key = backup.localSaleId || backup.id || backup.folio
+    if (!key || merged.has(key)) return
+    merged.set(key, backup)
+  })
+
+  return [...merged.values()].sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
 }
 
 export async function retryPendingLocalSales(filters = {}) {
@@ -136,6 +239,12 @@ export async function retryPendingLocalSales(filters = {}) {
           saleItemsPayload,
           supabaseId: result.id
         })
+        markSaleBackupStatus(safeSale.localSaleId || safeSale.clientSaleId || sale.id, safeSale.folio, {
+          status: 'synced',
+          supabaseId: result.id,
+          error: '',
+          syncedAt: new Date().toISOString()
+        })
         synced.push({ localId: sale.id, folio: sale.folio, result })
       } catch (error) {
         recordSaleSaveAttempt({
@@ -144,6 +253,10 @@ export async function retryPendingLocalSales(filters = {}) {
           sale: safeSale,
           salePayload,
           saleItemsPayload,
+          error: error.message || 'No se pudo sincronizar.'
+        })
+        markSaleBackupStatus(safeSale.localSaleId || safeSale.clientSaleId || sale.id, safeSale.folio, {
+          status: 'pending',
           error: error.message || 'No se pudo sincronizar.'
         })
         failed.push({ sale, error: error.message || 'No se pudo sincronizar.' })
@@ -169,6 +282,77 @@ export async function retryPendingLocalSales(filters = {}) {
   }
 
   return { synced, failed, total: pendingSales.length }
+}
+
+export async function retryLocalSaleBackups(filters = {}) {
+  requireSupabase('recuperar respaldos locales')
+
+  const cityFilter = typeof filters === 'string' ? filters : filters.city
+  const backups = getLocalSaleBackups({ city: cityFilter }).filter((backup) => backup.status !== 'synced')
+  const synced = []
+  const failed = []
+
+  for (const backup of backups) {
+    let safeSale
+    let salePayload
+    let saleItemsPayload
+
+    try {
+      safeSale = normalizeSaleForPersistence(backup.sale)
+      salePayload = buildSalePayload(safeSale)
+      saleItemsPayload = buildSaleItemsPayload('pending-sale-id', safeSale.items)
+    } catch (error) {
+      const message = error.message || 'Respaldo local invalido.'
+      markSaleBackupStatus(backup.localSaleId || backup.id, backup.folio, { status: 'pending', error: message })
+      failed.push({ backup, error: message })
+      continue
+    }
+
+    recordSaleSaveAttempt({
+      status: 'syncing',
+      stage: 'retry_backup',
+      sale: safeSale,
+      salePayload,
+      saleItemsPayload
+    })
+
+    try {
+      const result = await saveSaleToSupabase(safeSale)
+      markSaleBackupStatus(backup.localSaleId || backup.id, safeSale.folio, {
+        status: 'synced',
+        supabaseId: result.id,
+        error: '',
+        syncedAt: new Date().toISOString()
+      })
+      markLocalSaleSynced(backup.localSaleId || backup.id, safeSale.folio, result)
+      recordSaleSaveAttempt({
+        status: 'synced',
+        stage: 'retry_backup_saved',
+        sale: safeSale,
+        salePayload,
+        saleItemsPayload,
+        supabaseId: result.id
+      })
+      synced.push({ folio: safeSale.folio, result })
+    } catch (error) {
+      const message = error.message || 'No se pudo recuperar respaldo local.'
+      markSaleBackupStatus(backup.localSaleId || backup.id, safeSale.folio, {
+        status: 'pending',
+        error: message
+      })
+      recordSaleSaveAttempt({
+        status: 'error',
+        stage: 'retry_backup_failed',
+        sale: safeSale,
+        salePayload,
+        saleItemsPayload,
+        error: message
+      })
+      failed.push({ backup, error: message })
+    }
+  }
+
+  return { synced, failed, total: backups.length }
 }
 export async function fetchTodayAdminData(filters = {}) {
   const cityFilter = typeof filters === 'string' ? filters : filters.city
@@ -1313,6 +1497,44 @@ function readLocalSales() {
 
 function writeLocalSales(sales) {
   window.localStorage.setItem(LOCAL_SALES_KEY, JSON.stringify(sales))
+}
+
+function readSaleBackups() {
+  try {
+    return JSON.parse(window.localStorage.getItem(LOCAL_BACKUPS_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+function writeSaleBackups(backups) {
+  window.localStorage.setItem(LOCAL_BACKUPS_KEY, JSON.stringify(backups.slice(0, 250)))
+}
+
+function upsertSaleBackup(backup) {
+  const current = readSaleBackups()
+  const key = backup.localSaleId || backup.id || backup.folio
+  const next = [
+    backup,
+    ...current.filter((item) => (item.localSaleId || item.id || item.folio) !== key && item.folio !== backup.folio)
+  ]
+  writeSaleBackups(next)
+}
+
+function markSaleBackupStatus(localSaleId, folio, updates) {
+  const now = new Date().toISOString()
+  let found = false
+  const next = readSaleBackups().map((backup) => {
+    if (backup.localSaleId !== localSaleId && backup.id !== localSaleId && backup.folio !== folio) return backup
+    found = true
+    return {
+      ...backup,
+      ...updates,
+      updated_at: now
+    }
+  })
+
+  if (found) writeSaleBackups(next)
 }
 
 function readSaveAttempts() {
