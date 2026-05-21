@@ -591,11 +591,12 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <Metric label="Clientes" value={metrics.customersCaptured} />
                 <Metric label="Efectivo" value={money(metrics.cashSales)} />
                 <Metric label="Transfer/Tarjeta" value={money(metrics.transferTotal + metrics.cardTotal)} />
-                {(isSuperAdmin || isInvestor) && <Metric label="Utilidad est." value={money(inventoryMetrics.operatingProfit)} />}
-                {canManageOps && !isSuperAdmin && <Metric label="Utilidad bruta" value={money(metrics.grossProfit)} />}
-                {canManageOps && !isSuperAdmin && <Metric label="Utilidad neta" value={money(metrics.netProfit)} />}
+                {(isSuperAdmin || isInvestor) && <Metric label="Utilidad real" value={money(inventoryMetrics.operatingProfit)} />}
+                {canManageOps && !isSuperAdmin && <Metric label="Utilidad bruta est." value={money(metrics.grossProfit)} />}
+                {canManageOps && !isSuperAdmin && <Metric label="Utilidad neta est." value={money(metrics.netProfit)} />}
                 {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={`${inventoryMetrics.roi.toFixed(1)}%`} />}
               </div>
+              {metrics.partialSalesCount > 0 && <div style={styles.notice}>Utilidad estimada incluye regla 3x para ventas historicas sin detalle. Ventas reales sin costo quedan pendientes, no se estiman con 3x.</div>}
             </section>
 
             <section style={styles.cleanSection}>
@@ -608,7 +609,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <Metric label="Tickets 1h" value={operationalAnalytics.lastHourTickets} />
                 <Metric label="Pago dominante" value={operationalAnalytics.dominantPayment || 'Sin datos'} />
                 <Metric label="Categoria top" value={operationalAnalytics.topCategory?.name || 'Sin datos'} />
-                <Metric label="Utilidad tiempo real" value={money(operationalAnalytics.estimatedProfit)} />
+                <Metric label="Utilidad est." value={money(operationalAnalytics.estimatedProfit)} />
                 <Metric label="Ticket actual" value={money(metrics.averageTicket)} />
               </div>
             </section>
@@ -833,7 +834,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <DataRow label="Cantidad vendida" value={inventoryMetrics.quantitySold} />
                 <DataRow label="Restante estimado" value={inventoryMetrics.remainingEstimated} strong />
                 <DataRow label="Utilidad inventario" value={money(inventoryMetrics.estimatedProfit)} strong />
-                <DataRow label="Utilidad real est." value={money(inventoryMetrics.operatingProfit)} strong />
+                <DataRow label="Utilidad real" value={money(inventoryMetrics.operatingProfit)} strong />
               </section>
             )}
 
@@ -1240,7 +1241,7 @@ function TicketDetail({ sale, inventory, isInvestor, onCopy, onResendWhatsApp, o
       <DataRow label="Ciudad/evento" value={sale.city || 'Sin ciudad'} />
       <DataRow label="Fecha/hora" value={timestamp} />
       <DataRow label="Categorias" value={detail.categories || 'Sin detalle'} />
-      <DataRow label="Utilidad est." value={money(detail.estimatedProfit)} strong />
+      <DataRow label={detail.profitLabel} value={detail.profitValue} strong />
       <DataRow label="Cliente" value={sale.customer_name || 'Sin cliente'} />
       <DataRow label="WhatsApp" value={sale.customer_whatsapp || 'Sin numero'} />
       <DataRow label="Cajera" value={sale.cashier_name || 'Sin cajera'} />
@@ -1285,7 +1286,7 @@ function TicketItemCard({ item, inventory }) {
       <div style={styles.threeColumns}>
         <Metric label="Cant." value={Number(item.quantity || 0)} />
         <Metric label="Precio" value={money(item.unit_price ?? item.unitPrice)} />
-        <Metric label="Utilidad" value={money(estimateItemProfit(item, inventory))} />
+        <Metric label="Utilidad" value={formatItemProfit(item, inventory)} />
       </div>
     </article>
   )
@@ -1350,11 +1351,11 @@ function SuperAdminHierarchy({
               <Metric label="Unidades" value={analytics.unitsSold} />
               <Metric label="Unid/ticket" value={formatOptionalDecimal(analytics.averageUnitsPerTicket)} />
               <Metric label="Clientes" value={analytics.customersCaptured} />
-              <Metric label="Utilidad bruta" value={money(analytics.grossProfit)} />
-              <Metric label="Utilidad neta" value={money(analytics.netProfit)} />
+              <Metric label="Utilidad bruta est." value={money(analytics.grossProfit)} />
+              <Metric label="Utilidad neta est." value={money(analytics.netProfit)} />
               <Metric label="Gastos" value={money(analytics.totalExpenses)} />
             </div>
-            {analytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye {analytics.partialSalesCount} venta(s) historicas parciales. Unidades calculadas solo con ventas con detalle.</div>}
+            {analytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye {analytics.partialSalesCount} venta(s) historicas parciales. Unidades calculadas solo con ventas con detalle. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
             <button type="button" style={styles.primaryButton} onClick={() => openOperations('')}>Ver todas las operaciones</button>
           </section>
 
@@ -1397,7 +1398,7 @@ function SuperAdminHierarchy({
                 <Metric label="Unid/ticket" value={formatOptionalDecimal(currentCityAnalytics.averageUnitsPerTicket)} />
                 <Metric label="Clientes" value={currentCityAnalytics.customersCaptured} />
               </div>
-              {currentCityAnalytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye ventas historicas parciales. Unidades y categorias solo usan tickets con articulos.</div>}
+              {currentCityAnalytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye ventas historicas parciales. Unidades y categorias solo usan tickets con articulos. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
               <BreakdownGroup title="Metodos de pago" rows={currentCityAnalytics.paymentRows} moneyValues />
               <BreakdownGroup title="Categorias top" rows={currentCityAnalytics.categoryRows.map((row) => ({ name: row.name, value: row.sales, meta: `${row.quantity} pza(s)` }))} moneyValues />
               <div style={styles.itemStack}>
@@ -2020,7 +2021,7 @@ function buildMonthlyAnalytics(activeSales, allSales, expenses) {
   const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + saleTotal(sale), 0)
   const unitsSold = totalUnitsOfSales(detailedSales)
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-  const grossProfit = estimateBasicGrossProfit(activeSales)
+  const grossProfit = estimateSalesProfit(activeSales)
   const cityRows = buildCityRows(activeSales, expenses)
 
   return {
@@ -2073,7 +2074,7 @@ function buildCityRows(sales, expenses) {
       const detailedSales = salesWithItemDetail(row.sales)
       const unitsSold = totalUnitsOfSales(detailedSales)
       const cityExpenses = row.expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-      const grossProfit = estimateBasicGrossProfit(row.sales)
+      const grossProfit = estimateSalesProfit(row.sales)
 
       return {
         city: row.city,
@@ -2290,9 +2291,14 @@ function topEntry(totals) {
 function buildTicketAnalytics(sale, inventory) {
   const items = saleItemsOf(sale)
   const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].join(', ')
+  const profit = estimateSaleProfit(sale, inventory)
+  const partialEstimated = estimatePartialHistoricalProfit(sale)
+  const hasCost = saleHasRealCostDetail(sale, inventory)
   return {
     categories,
-    estimatedProfit: estimateSaleProfit(sale, inventory)
+    estimatedProfit: profit,
+    profitLabel: partialEstimated > 0 ? 'Utilidad est. historica' : hasCost ? 'Utilidad real' : 'Utilidad',
+    profitValue: partialEstimated > 0 ? `${money(partialEstimated)} est. 3x` : hasCost ? money(profit) : 'Pendiente costo'
   }
 }
 
@@ -2300,28 +2306,32 @@ function estimateSalesProfit(sales, inventory) {
   return sales.reduce((sum, sale) => sum + estimateSaleProfit(sale, inventory), 0)
 }
 
-function estimateBasicGrossProfit(sales) {
-  return sales.reduce((sum, sale) => {
-    const total = saleTotal(sale)
-    return sum + total - total / 3
-  }, 0)
-}
-
 function estimateSaleProfit(sale, inventory = {}) {
   const items = saleItemsOf(sale)
   const codeCosts = buildCodeCostMap(inventory)
 
   if (!items.length) {
-    return 0
+    return estimatePartialHistoricalProfit(sale)
   }
 
   return items.reduce((sum, item) => {
     const subtotal = itemLineTotal(item)
     const quantity = Number(item.quantity || 0)
     const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
-    const fallbackCost = subtotal / 3
-    return sum + subtotal - (unitCost > 0 ? unitCost * quantity : fallbackCost)
+    if (unitCost <= 0) return sum
+    return sum + subtotal - unitCost * quantity
   }, 0)
+}
+
+function estimatePartialHistoricalProfit(sale) {
+  if (!isPartialWithoutItems(sale)) return 0
+  const total = saleTotal(sale)
+  return total - total / 3
+}
+
+function saleHasRealCostDetail(sale, inventory = {}) {
+  const codeCosts = buildCodeCostMap(inventory)
+  return saleItemsOf(sale).some((item) => Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0) > 0)
 }
 
 function buildCodeCostMap(inventory = {}) {
@@ -2385,7 +2395,13 @@ function estimateItemProfit(item, inventory = {}) {
   const quantity = Number(item.quantity || 0)
   const codeCosts = buildCodeCostMap(inventory)
   const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
-  return subtotal - (unitCost > 0 ? unitCost * quantity : subtotal / 3)
+  if (unitCost <= 0) return null
+  return subtotal - unitCost * quantity
+}
+
+function formatItemProfit(item, inventory = {}) {
+  const profit = estimateItemProfit(item, inventory)
+  return profit === null ? 'Pendiente' : money(profit)
 }
 
 function saleDate(sale) {
@@ -2423,11 +2439,12 @@ function buildMetrics(sales, expenses, cashCuts) {
   const expectedCash = cashSales
   const latestDifference = cashCuts.length ? Number(cashCuts[0].difference || 0) : 0
   const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
-  const estimatedCost = totalSold / 3
-  const grossProfit = totalSold - estimatedCost
+  const grossProfit = estimateSalesProfit(sales)
+  const estimatedCost = Math.max(totalSold - grossProfit, 0)
   const netProfit = grossProfit - totalExpenses
+  const partialSalesCount = sales.filter(isPartialWithoutItems).length
 
-  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured }
+  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured, partialSalesCount }
 }
 
 function calculateCashCutDifference(cashCounted, expectedCash, cashExpenses) {
@@ -2485,6 +2502,7 @@ function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
   let quantitySold = 0
   let estimatedRevenue = 0
   let actualRevenue = 0
+  let costedRevenue = 0
   let soldCost = 0
 
   saleItems.forEach((saleItem) => {
@@ -2496,15 +2514,17 @@ function buildInventoryMetrics(inventory, totalSold, totalExpenses) {
     const unitPrice = Number(saleItem.unit_price || 0)
     const subtotal = Number(saleItem.subtotal || quantity * unitPrice)
     const suggestedPrice = Number(relatedItem?.suggested_price || codeRow?.suggested_price || unitPrice || 0)
-    const unitCost = Number(relatedItem?.unit_cost || codeRow?.unit_cost || saleItem.unit_cost || 0) || (unitPrice || subtotal / Math.max(quantity, 1)) / 3
+    const unitCost = Number(relatedItem?.unit_cost || codeRow?.unit_cost || saleItem.unit_cost || 0)
     quantitySold += quantity
     estimatedRevenue += quantity * suggestedPrice
     actualRevenue += subtotal
+    if (unitCost <= 0) return
+    costedRevenue += subtotal
     soldCost += quantity * unitCost
   })
 
   const remainingEstimated = Math.max(quantityPurchased - quantitySold, 0)
-  const estimatedProfit = actualRevenue - soldCost
+  const estimatedProfit = costedRevenue - soldCost
   const operatingProfit = estimatedProfit - totalExpenses
   const roi = totalInvestment > 0 ? (operatingProfit / totalInvestment) * 100 : 0
   const salesVsInvestment = totalInvestment > 0 ? (totalSold / totalInvestment) * 100 : 0
