@@ -104,6 +104,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const [notice, setNotice] = useState('')
 
   const effectiveCity = eventCity.trim()
+  const showManagerMonthlyOverview = canManageOps && !isSuperAdmin && !isInvestor
 
   async function loadDashboard(city = effectiveCity, date = eventDate, month = eventMonth) {
     setLoading(true)
@@ -111,12 +112,13 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
     try {
       const shouldLoadInventory = isSuperAdmin || isInvestor
-      const shouldLoadManagerMonthly = isManager && !isSuperAdmin && !isInvestor
+      const shouldLoadManagerMonthly = showManagerMonthlyOverview
       const filters = dashboardFilters({ city, date, month, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
+      const managerMonthlyFilters = dashboardManagerMonthlyFilters(month)
       const [adminResult, inventoryResult, managerMonthlyResult] = await Promise.all([
         fetchTodayAdminData(filters),
         shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] }),
-        shouldLoadManagerMonthly ? fetchTodayAdminData({ month }) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
+        shouldLoadManagerMonthly ? fetchTodayAdminData(managerMonthlyFilters) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
       ])
       setSummary(adminResult)
       setInventory(inventoryResult)
@@ -138,12 +140,13 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError('')
       try {
         const shouldLoadInventory = isSuperAdmin || isInvestor
-        const shouldLoadManagerMonthly = isManager && !isSuperAdmin && !isInvestor
+        const shouldLoadManagerMonthly = showManagerMonthlyOverview
         const filters = dashboardFilters({ city: eventCity.trim(), date: eventDate, month: eventMonth, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
+        const managerMonthlyFilters = dashboardManagerMonthlyFilters(eventMonth)
         const [adminResult, inventoryResult, managerMonthlyResult] = await Promise.all([
           fetchTodayAdminData(filters),
           shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] }),
-          shouldLoadManagerMonthly ? fetchTodayAdminData({ month: eventMonth }) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
+          shouldLoadManagerMonthly ? fetchTodayAdminData(managerMonthlyFilters) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
         ])
         if (alive) {
           setSummary(adminResult)
@@ -164,18 +167,21 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       alive = false
       window.clearTimeout(timeout)
     }
-  }, [eventCity, eventDate, eventMonth, isManager, isSuperAdmin, isInvestor, usesMonthlyGlobalView, periodMode, managerPeriodMode])
+  }, [eventCity, eventDate, eventMonth, isManager, isSuperAdmin, isInvestor, showManagerMonthlyOverview, usesMonthlyGlobalView, periodMode, managerPeriodMode])
 
 
   const activeSales = useMemo(() => summary.sales.filter((sale) => !isCancelledSale(sale)), [summary.sales])
-  const managerMonthlyActiveSales = useMemo(() => managerMonthlySummary.sales.filter((sale) => !isCancelledSale(sale)), [managerMonthlySummary.sales])
+  const hasManagerMonthData = managerMonthlySummary.sales.length > 0 || managerMonthlySummary.expenses.length > 0
+  const activeViewIsGlobalMonth = !usesMonthlyGlobalView && managerPeriodMode === 'month' && !effectiveCity
+  const managerMonthlySource = hasManagerMonthData || !activeViewIsGlobalMonth ? managerMonthlySummary : summary
+  const managerMonthlyActiveSales = useMemo(() => managerMonthlySource.sales.filter((sale) => !isCancelledSale(sale)), [managerMonthlySource.sales])
   const cancelledSales = useMemo(() => summary.sales.filter(isCancelledSale), [summary.sales])
   const criticalChanges = useMemo(() => buildCriticalChanges(cancelledSales), [cancelledSales])
   const metrics = useMemo(() => buildMetrics(activeSales, summary.expenses, summary.cashCuts), [activeSales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const operationalAnalytics = useMemo(() => buildOperationalAnalytics(activeSales, summary.expenses, inventory), [activeSales, summary.expenses, inventory])
   const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses, inventory), [activeSales, summary.sales, summary.expenses, inventory])
-  const managerMonthlyAnalytics = useMemo(() => buildMonthlyAnalytics(managerMonthlyActiveSales, managerMonthlySummary.sales, managerMonthlySummary.expenses, inventory), [managerMonthlyActiveSales, managerMonthlySummary.sales, managerMonthlySummary.expenses, inventory])
+  const managerMonthlyAnalytics = useMemo(() => buildMonthlyAnalytics(managerMonthlyActiveSales, managerMonthlySource.sales, managerMonthlySource.expenses, inventory), [managerMonthlyActiveSales, managerMonthlySource.sales, managerMonthlySource.expenses, inventory])
   const visibleTickets = useMemo(() => filterTickets(activeSales, ticketSearch), [activeSales, ticketSearch])
   const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill)), inventory) : null, [activeSales, summary.sales, summary.expenses, inventory, selectedCityDrill])
   const operationsSales = useMemo(() => {
@@ -615,6 +621,15 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
             {summary.storage === 'local' && !loading && <div style={styles.notice}>{summary.reason || 'Mostrando ventas locales de este navegador.'}</div>}
             {summary.reason && summary.storage === 'supabase' && !loading && <div style={styles.notice}>{summary.reason}</div>}
             {inventory.reason && (isSuperAdmin || isInvestor) && !loading && <div style={styles.notice}>{inventory.reason}</div>}
+            {showManagerMonthlyOverview && managerView !== 'operations' && (
+              <ManagerMonthlyOverview
+                analytics={managerMonthlyAnalytics}
+                month={eventMonth}
+                loading={loading}
+                reason={managerMonthlySource.reason}
+                onViewMonth={() => { setManagerPeriodMode('month'); setEventCity(''); setManagerView('dashboard'); setSelectedTicket(null) }}
+              />
+            )}
 
             {usesMonthlyGlobalView ? (
               <section style={styles.cleanSection}>
@@ -697,10 +712,6 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 />
               ) : (
                 <>
-            {canManageOps && !isSuperAdmin && (
-              <ManagerMonthlyOverview analytics={managerMonthlyAnalytics} month={eventMonth} onViewMonth={() => setManagerPeriodMode('month')} />
-            )}
-
             <section style={styles.cleanSection}>
               <div style={styles.sectionHead}>
                 <h2 style={styles.sectionTitle}>Resumen</h2>
@@ -1864,6 +1875,10 @@ function dashboardFilters({ city, date, month, global, periodMode, managerPeriod
 
   if (managerPeriodMode === 'month') return { city, month }
   return { city, date }
+}
+
+function dashboardManagerMonthlyFilters(month) {
+  return { city: '', month }
 }
 
 function periodRange(mode, month) {
