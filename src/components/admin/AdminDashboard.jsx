@@ -718,15 +718,20 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <Metric label="Total vendido" value={money(metrics.totalSold)} />
                 <Metric label="Ticket promedio" value={money(metrics.averageTicket)} />
                 <Metric label="Clientes" value={metrics.customersCaptured} />
+                <Metric label="Unidades" value={metrics.unitsSold} />
+                <Metric label="Unid/ticket" value={formatOptionalDecimal(metrics.averageUnitsPerTicket)} />
+                <Metric label="Costo" value={money(metrics.estimatedCost)} />
+                <Metric label="Gastos" value={money(metrics.totalExpenses)} />
+                <Metric label="Margen" value={`${metrics.marginNet.toFixed(1)}%`} />
                 <Metric label="Efectivo" value={money(metrics.cashSales)} />
                 <Metric label="Transfer/Tarjeta" value={money(metrics.transferTotal + metrics.cardTotal)} />
-                {(isSuperAdmin || isInvestor) && <Metric label="Utilidad real" value={money(inventoryMetrics.operatingProfit)} />}
+                {(isSuperAdmin || isInvestor) && <Metric label="Utilidad neta" value={money(metrics.netProfit)} />}
                 {canManageOps && !isSuperAdmin && <Metric label="Utilidad bruta est." value={money(metrics.grossProfit)} />}
                 {canManageOps && !isSuperAdmin && <Metric label="Utilidad neta est." value={money(metrics.netProfit)} />}
                 {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={`${inventoryMetrics.roi.toFixed(1)}%`} />}
               </div>
-              {metrics.partialSalesCount > 0 && <div style={styles.notice}>Utilidad estimada incluye regla 3x para ventas historicas sin detalle. Ventas reales sin costo quedan pendientes, no se estiman con 3x.</div>}
-              {canManageOps && !isSuperAdmin && <ProfitBreakdownPanel breakdown={metrics.profitBreakdown} title="Ver desglose utilidad" />}
+              {(metrics.profitBreakdown.estimatedFallbackSalesCount > 0 || metrics.partialSalesCount > 0) && <div style={styles.notice}>Utilidad estimada usa regla 3x cuando falta costo real. Unidades solo usan tickets con detalle de articulos.</div>}
+              {canManageOps && !isSuperAdmin && <ProfitBreakdownPanel breakdown={metrics.profitBreakdown} title="Ver desglose financiero" />}
             </section>
 
             <section style={styles.cleanSection}>
@@ -1529,12 +1534,14 @@ function SuperAdminHierarchy({
               <Metric label="Unidades" value={analytics.unitsSold} />
               <Metric label="Unid/ticket" value={formatOptionalDecimal(analytics.averageUnitsPerTicket)} />
               <Metric label="Clientes" value={analytics.customersCaptured} />
-              <Metric label="Utilidad bruta est." value={money(analytics.grossProfit)} />
-              <Metric label="Utilidad neta est." value={money(analytics.netProfit)} />
+              <Metric label="Costo" value={money(analytics.profitBreakdown.realCost + analytics.profitBreakdown.estimatedCost)} />
+              <Metric label="Utilidad bruta" value={money(analytics.grossProfit)} />
               <Metric label="Gastos" value={money(analytics.totalExpenses)} />
+              <Metric label="Utilidad neta" value={money(analytics.netProfit)} />
+              <Metric label="Margen" value={`${analytics.profitBreakdown.marginNet.toFixed(1)}%`} />
             </div>
-            {analytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye {analytics.partialSalesCount} venta(s) historicas parciales. Unidades calculadas solo con ventas con detalle. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
-            <ProfitBreakdownPanel breakdown={analytics.profitBreakdown} title="Ver desglose utilidad" />
+            {(analytics.partialSalesCount > 0 || analytics.profitBreakdown.estimatedFallbackSalesCount > 0) && <div style={styles.notice}>Incluye estimaciones 3x cuando falta costo real. Unidades calculadas solo con ventas con detalle.</div>}
+            <ProfitBreakdownPanel breakdown={analytics.profitBreakdown} title="Ver desglose financiero" />
             <button type="button" style={styles.primaryButton} onClick={() => openOperations('')}>Ver todas las operaciones</button>
           </section>
 
@@ -1576,9 +1583,14 @@ function SuperAdminHierarchy({
                 <Metric label="Unidades" value={currentCityAnalytics.unitsSold} />
                 <Metric label="Unid/ticket" value={formatOptionalDecimal(currentCityAnalytics.averageUnitsPerTicket)} />
                 <Metric label="Clientes" value={currentCityAnalytics.customersCaptured} />
+                <Metric label="Costo" value={money(currentCityAnalytics.profitBreakdown.realCost + currentCityAnalytics.profitBreakdown.estimatedCost)} />
+                <Metric label="Utilidad bruta" value={money(currentCityAnalytics.grossProfit)} />
+                <Metric label="Gastos" value={money(currentCityAnalytics.totalExpenses)} />
+                <Metric label="Utilidad neta" value={money(currentCityAnalytics.netProfit)} />
+                <Metric label="Margen" value={`${currentCityAnalytics.profitBreakdown.marginNet.toFixed(1)}%`} />
               </div>
-              {currentCityAnalytics.partialSalesCount > 0 && <div style={styles.notice}>Incluye ventas historicas parciales. Unidades y categorias solo usan tickets con articulos. Utilidad estimada incluye regla 3x para ventas historicas sin detalle.</div>}
-              <ProfitBreakdownPanel breakdown={currentCityAnalytics.profitBreakdown} title={`Ver desglose ${selectedCity}`} />
+              {(currentCityAnalytics.partialSalesCount > 0 || currentCityAnalytics.profitBreakdown.estimatedFallbackSalesCount > 0) && <div style={styles.notice}>Incluye estimaciones 3x cuando falta costo real. Unidades y categorias solo usan tickets con articulos.</div>}
+              <ProfitBreakdownPanel breakdown={currentCityAnalytics.profitBreakdown} title={`Ver desglose financiero ${selectedCity}`} />
               <BreakdownGroup title="Metodos de pago" rows={currentCityAnalytics.paymentRows} moneyValues />
               <BreakdownGroup title="Categorias top" rows={currentCityAnalytics.categoryRows.map((row) => ({ name: row.name, value: row.sales, meta: `${row.quantity} pza(s)` }))} moneyValues />
               <div style={styles.itemStack}>
@@ -1709,7 +1721,7 @@ function BreakdownGroup({ title, rows, moneyValues = false }) {
   )
 }
 
-function ProfitBreakdownPanel({ breakdown, title = 'Ver desglose utilidad' }) {
+function ProfitBreakdownPanel({ breakdown, title = 'Ver desglose financiero' }) {
   if (!breakdown) return null
 
   return (
@@ -1719,13 +1731,14 @@ function ProfitBreakdownPanel({ breakdown, title = 'Ver desglose utilidad' }) {
         <DataRow label="Venta total" value={money(breakdown.totalSold)} />
         <DataRow label="Costo mercancia real" value={money(breakdown.realCost)} />
         <DataRow label="Costo mercancia estimado" value={money(breakdown.estimatedCost)} />
-        <DataRow label="Venta sin costo pendiente" value={money(breakdown.pendingCostRevenue)} />
+        <DataRow label="Venta estimada por falta de costo" value={money(breakdown.pendingCostRevenue)} />
         <DataRow label="Utilidad bruta real" value={money(breakdown.grossReal)} />
         <DataRow label="Utilidad bruta estimada" value={money(breakdown.grossEstimated)} />
         <DataRow label="Gastos reales" value={`-${money(breakdown.expenses)}`} />
         <DataRow label="Utilidad neta real/estimada" value={money(breakdown.netProfitTotal)} strong />
+        <DataRow label="Tickets estimados" value={breakdown.estimatedFallbackSalesCount || 0} />
         <DataRow label="Margen neto" value={`${breakdown.marginNet.toFixed(1)}%`} />
-        <div style={styles.notice}>Formula: utilidad real = ventas con costo real - costo real. Utilidad estimada = historicos/parciales con regla 3x. Ventas reales sin costo quedan pendientes y no usan 3x.</div>
+        <div style={styles.notice}>Formula: costo real usa unit_cost cuando existe. Si falta costo, se estima costo = venta / 3 y utilidad = venta * 2/3. Gastos se restan una sola vez. Unidades no incluyen ventas parciales sin articulos.</div>
       </div>
     </details>
   )
@@ -2506,13 +2519,13 @@ function buildTicketAnalytics(sale, inventory) {
   const items = saleItemsOf(sale)
   const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].join(', ')
   const profit = estimateSaleProfit(sale, inventory)
-  const partialEstimated = estimatePartialHistoricalProfit(sale)
   const hasCost = saleHasRealCostDetail(sale, inventory)
+  const hasItems = items.length > 0
   return {
     categories,
     estimatedProfit: profit,
-    profitLabel: partialEstimated > 0 ? 'Utilidad est. historica' : hasCost ? 'Utilidad real' : 'Utilidad',
-    profitValue: partialEstimated > 0 ? `${money(partialEstimated)} est. 3x` : hasCost ? money(profit) : 'Pendiente costo'
+    profitLabel: hasCost ? 'Utilidad real' : 'Utilidad estimada',
+    profitValue: hasCost ? money(profit) : hasItems ? `${money(profit)} est. 3x` : `${money(profit)} est. parcial`
   }
 }
 
@@ -2530,19 +2543,27 @@ function buildProfitBreakdown(sales, expenses, inventory = {}) {
     estimatedCost: 0,
     pendingCostRevenue: 0,
     expenses: expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0),
-    partialSalesCount: sales.filter(isPartialWithoutItems).length
+    partialSalesCount: sales.filter(isPartialWithoutItems).length,
+    estimatedFallbackSalesCount: 0,
+    realCostSalesCount: 0,
+    noItemPartialRevenue: 0
   }
 
   sales.forEach((sale) => {
     const items = saleItemsOf(sale)
     if (!items.length) {
-      if (isPartialWithoutItems(sale)) {
-        const total = saleTotal(sale)
+      const total = saleTotal(sale)
+      if (total > 0) {
         totals.estimatedRevenue += total
         totals.estimatedCost += total / 3
+        totals.noItemPartialRevenue += total
+        totals.estimatedFallbackSalesCount += 1
       }
       return
     }
+
+    let saleUsedEstimate = false
+    let saleUsedRealCost = false
 
     items.forEach((item) => {
       const subtotal = itemLineTotal(item)
@@ -2551,17 +2572,18 @@ function buildProfitBreakdown(sales, expenses, inventory = {}) {
       if (unitCost > 0) {
         totals.realRevenue += subtotal
         totals.realCost += unitCost * quantity
+        saleUsedRealCost = true
         return
       }
 
-      if (isHistoricalEstimatedSale(sale)) {
-        totals.estimatedRevenue += subtotal
-        totals.estimatedCost += subtotal / 3
-        return
-      }
-
+      totals.estimatedRevenue += subtotal
+      totals.estimatedCost += subtotal / 3
       totals.pendingCostRevenue += subtotal
+      saleUsedEstimate = true
     })
+
+    if (saleUsedEstimate) totals.estimatedFallbackSalesCount += 1
+    if (saleUsedRealCost) totals.realCostSalesCount += 1
   })
 
   const grossReal = totals.realRevenue - totals.realCost
@@ -2584,24 +2606,19 @@ function estimateSaleProfit(sale, inventory = {}) {
   const codeCosts = buildCodeCostMap(inventory)
 
   if (!items.length) {
-    return estimatePartialHistoricalProfit(sale)
+    const total = saleTotal(sale)
+    return total - total / 3
   }
 
   return items.reduce((sum, item) => {
     const subtotal = itemLineTotal(item)
     const quantity = Number(item.quantity || 0)
     const unitCost = Number(item.unit_cost || codeCosts.get(normalizeCode(item.code_detected)) || 0)
-    if (unitCost <= 0 && isHistoricalEstimatedSale(sale)) return sum + subtotal - subtotal / 3
-    if (unitCost <= 0) return sum
+    if (unitCost <= 0) return sum + subtotal - subtotal / 3
     return sum + subtotal - unitCost * quantity
   }, 0)
 }
 
-function estimatePartialHistoricalProfit(sale) {
-  if (!isPartialWithoutItems(sale)) return 0
-  const total = saleTotal(sale)
-  return total - total / 3
-}
 
 function saleHasRealCostDetail(sale, inventory = {}) {
   const codeCosts = buildCodeCostMap(inventory)
