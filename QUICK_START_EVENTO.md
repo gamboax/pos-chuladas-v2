@@ -62,6 +62,16 @@ La venta no se bloquea si la IA falla.
 4. Captura cliente opcional: nombre, WhatsApp y tipo de cliente.
 5. Toca Guardar venta.
 
+## Estados de guardado
+
+Al tocar Guardar venta, la app primero crea un respaldo local en el celular y despues intenta sincronizar con Supabase.
+
+- Sincronizada: la venta ya esta en Supabase y dashboard.
+- Pendiente local: la venta esta respaldada en el celular y se puede reintentar.
+- Error: no cierres la pantalla si el mensaje dice que no se pudo respaldar la venta.
+
+Si una venta queda pendiente, no repitas el cobro. Usa Reintentar o Exportar respaldo antes de borrar datos del navegador.
+
 ## WhatsApp
 
 Despues de guardar:
@@ -81,6 +91,23 @@ La venta puede quedar como Pendiente de sincronizar.
 4. Si falla, la venta sigue guardada localmente en el celular.
 
 Importante: las ventas pendientes viven en ese dispositivo. No borres datos del navegador hasta sincronizar.
+
+## Recuperar ventas locales
+
+Si una venta se mando por WhatsApp pero no aparece en dashboard:
+
+1. En el mismo celular, abre la app.
+2. Revisa el banner de pendientes en Caja.
+3. Toca Pendientes o Reintentar.
+4. En admin operativo, baja hasta Respaldo local.
+5. Toca Reintentar para sincronizar.
+6. Si sigue fallando, toca Exportar respaldo y guarda el JSON.
+
+Super_admin puede abrir los detalles tecnicos para ver ultimos guardados, error real y payload de respaldo. Manager solo debe usar la vista simple.
+
+## Exportar respaldo de emergencia
+
+Usa Exportar respaldo si el internet esta inestable o hay dudas antes de cerrar el evento. Ese archivo contiene las ventas locales del dispositivo y sirve para reconstruirlas si Supabase no recibio alguna.
 
 ## Resumen del dia para caja
 
@@ -115,13 +142,23 @@ Solo super_admin:
 
 ## Checklist durante el evento
 
+- Hacer una venta de prueba y confirmar que salga Sincronizada.
 - Ciudad correcta en banner.
 - Folio visible.
 - Sin pendientes acumuladas si hay internet.
 - Scanner con permiso de camara.
 - Caja no se queda en dashboard.
-- Cada venta termina en ticket guardado o pendiente.
+- Cada venta termina como Sincronizada o Pendiente local visible.
+- Si WhatsApp abre y la app se pausa, volver a POS y revisar pendientes.
 - No borrar datos del navegador con pendientes.
+
+## Validar cierre de evento
+
+1. En Caja, confirma que Pendientes sea 0 o exporta respaldo.
+2. En admin operativo, revisa Resumen mensual general y vista del dia/ciudad.
+3. Revisa que venta total, tickets, gastos y corte correspondan al evento.
+4. Si hay diferencia de caja, agrega nota antes de guardar corte.
+5. Exporta ventas/gastos/corte si se requiere respaldo administrativo.
 
 ## Checklist despues del evento
 
