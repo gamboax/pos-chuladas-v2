@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Component, Suspense, lazy, useEffect, useState } from 'react'
 import Login from './components/Login'
 import { clearUserSession, readUserSession, refreshUserSession } from './lib/session'
 
@@ -48,7 +48,9 @@ function App() {
   if (user.role === 'investor') {
     return (
       <Suspense fallback={<AppLoader label="Cargando vista..." />}>
-        <AdminDashboard user={user} onLogout={logout} />
+        <DashboardErrorBoundary onBack={logout}>
+          <AdminDashboard user={user} onLogout={logout} />
+        </DashboardErrorBoundary>
       </Suspense>
     )
   }
@@ -56,7 +58,9 @@ function App() {
   if (ADMIN_ROLES.has(user.role) && view === 'admin') {
     return (
       <Suspense fallback={<AppLoader label="Cargando dashboard..." />}>
-        <AdminDashboard user={user} onBackToPOS={() => setView('pos')} onLogout={logout} />
+        <DashboardErrorBoundary onBack={() => setView('pos')}>
+          <AdminDashboard user={user} onBackToPOS={() => setView('pos')} onLogout={logout} />
+        </DashboardErrorBoundary>
       </Suspense>
     )
   }
@@ -72,6 +76,34 @@ function App() {
   return <Login onLogin={setUser} />
 }
 
+class DashboardErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error) {
+    if (import.meta.env.DEV) console.error('[Dashboard] render crash:', error)
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children
+
+    return (
+      <main style={loaderStyles.page}>
+        <section style={loaderStyles.card}>
+          <strong>No se pudo abrir el dashboard.</strong>
+          <span style={loaderStyles.message}>La caja sigue disponible. Vuelve a caja y reintenta.</span>
+          <button type="button" style={loaderStyles.button} onClick={this.props.onBack}>Volver a caja</button>
+        </section>
+      </main>
+    )
+  }
+}
 function AppLoader({ label }) {
   return (
     <main style={loaderStyles.page}>
@@ -111,6 +143,22 @@ const loaderStyles = {
     height: 8,
     borderRadius: 999,
     background: '#10B981'
+  },
+  message: {
+    color: '#555555',
+    fontSize: 14,
+    textAlign: 'center',
+    maxWidth: 260
+  },
+  button: {
+    width: 'calc(100% - 32px)',
+    minHeight: 52,
+    border: 'none',
+    borderRadius: 18,
+    background: '#111111',
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: 760
   }
 }
 

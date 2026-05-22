@@ -722,13 +722,13 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 <Metric label="Unid/ticket" value={formatOptionalDecimal(metrics.averageUnitsPerTicket)} />
                 <Metric label="Costo" value={money(metrics.estimatedCost)} />
                 <Metric label="Gastos" value={money(metrics.totalExpenses)} />
-                <Metric label="Margen" value={`${metrics.marginNet.toFixed(1)}%`} />
+                <Metric label="Margen" value={formatPercent(metrics.marginNet)} />
                 <Metric label="Efectivo" value={money(metrics.cashSales)} />
                 <Metric label="Transfer/Tarjeta" value={money(metrics.transferTotal + metrics.cardTotal)} />
                 {(isSuperAdmin || isInvestor) && <Metric label="Utilidad neta" value={money(metrics.netProfit)} />}
                 {canManageOps && !isSuperAdmin && <Metric label="Utilidad bruta est." value={money(metrics.grossProfit)} />}
                 {canManageOps && !isSuperAdmin && <Metric label="Utilidad neta est." value={money(metrics.netProfit)} />}
-                {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={`${inventoryMetrics.roi.toFixed(1)}%`} />}
+                {(isSuperAdmin || isInvestor) && <Metric label="ROI" value={formatPercent(inventoryMetrics.roi)} />}
               </div>
               {(metrics.profitBreakdown.estimatedFallbackSalesCount > 0 || metrics.partialSalesCount > 0) && <div style={styles.notice}>Utilidad estimada usa regla 3x cuando falta costo real. Unidades solo usan tickets con detalle de articulos.</div>}
               {canManageOps && !isSuperAdmin && <ProfitBreakdownPanel breakdown={metrics.profitBreakdown} title="Ver desglose financiero" />}
@@ -977,7 +977,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   <span style={styles.chip}>{isInvestor ? 'Solo lectura' : 'Super admin'}</span>
                 </div>
                 <DataRow label="Inversion total" value={money(inventoryMetrics.totalInvestment)} />
-                <DataRow label="Venta vs inversion" value={`${inventoryMetrics.salesVsInvestment.toFixed(1)}%`} />
+                <DataRow label="Venta vs inversion" value={formatPercent(inventoryMetrics.salesVsInvestment)} />
                 <DataRow label="Cantidad comprada" value={inventoryMetrics.quantityPurchased} />
                 <DataRow label="Cantidad vendida" value={inventoryMetrics.quantitySold} />
                 <DataRow label="Restante estimado" value={inventoryMetrics.remainingEstimated} strong />
@@ -1538,7 +1538,7 @@ function SuperAdminHierarchy({
               <Metric label="Utilidad bruta" value={money(analytics.grossProfit)} />
               <Metric label="Gastos" value={money(analytics.totalExpenses)} />
               <Metric label="Utilidad neta" value={money(analytics.netProfit)} />
-              <Metric label="Margen" value={`${analytics.profitBreakdown.marginNet.toFixed(1)}%`} />
+              <Metric label="Margen" value={formatPercent(analytics.profitBreakdown?.marginNet)} />
             </div>
             {(analytics.partialSalesCount > 0 || analytics.profitBreakdown.estimatedFallbackSalesCount > 0) && <div style={styles.notice}>Incluye estimaciones 3x cuando falta costo real. Unidades calculadas solo con ventas con detalle.</div>}
             <ProfitBreakdownPanel breakdown={analytics.profitBreakdown} title="Ver desglose financiero" />
@@ -1587,7 +1587,7 @@ function SuperAdminHierarchy({
                 <Metric label="Utilidad bruta" value={money(currentCityAnalytics.grossProfit)} />
                 <Metric label="Gastos" value={money(currentCityAnalytics.totalExpenses)} />
                 <Metric label="Utilidad neta" value={money(currentCityAnalytics.netProfit)} />
-                <Metric label="Margen" value={`${currentCityAnalytics.profitBreakdown.marginNet.toFixed(1)}%`} />
+                <Metric label="Margen" value={formatPercent(currentCityAnalytics.profitBreakdown?.marginNet)} />
               </div>
               {(currentCityAnalytics.partialSalesCount > 0 || currentCityAnalytics.profitBreakdown.estimatedFallbackSalesCount > 0) && <div style={styles.notice}>Incluye estimaciones 3x cuando falta costo real. Unidades y categorias solo usan tickets con articulos.</div>}
               <ProfitBreakdownPanel breakdown={currentCityAnalytics.profitBreakdown} title={`Ver desglose financiero ${selectedCity}`} />
@@ -1682,7 +1682,7 @@ function CityDrillRow({ city, max, onOpen }) {
         <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
       </div>
       <small>{city.salesCount} ticket(s) / {unitsLabel} / Prom. {money(city.averageTicket)}</small>
-      <small>Bruta {money(city.grossProfit)} / Gastos {money(city.totalExpenses)} / Neta {money(city.netProfit)} / Margen {margin.toFixed(1)}%</small>
+      <small>Bruta {money(city.grossProfit)} / Gastos {money(city.totalExpenses)} / Neta {money(city.netProfit)} / Margen {formatPercent(margin)}</small>
     </button>
   )
 }
@@ -1737,7 +1737,7 @@ function ProfitBreakdownPanel({ breakdown, title = 'Ver desglose financiero' }) 
         <DataRow label="Gastos reales" value={`-${money(breakdown.expenses)}`} />
         <DataRow label="Utilidad neta real/estimada" value={money(breakdown.netProfitTotal)} strong />
         <DataRow label="Tickets estimados" value={breakdown.estimatedFallbackSalesCount || 0} />
-        <DataRow label="Margen neto" value={`${breakdown.marginNet.toFixed(1)}%`} />
+        <DataRow label="Margen neto" value={formatPercent(breakdown.marginNet)} />
         <div style={styles.notice}>Formula: costo real usa unit_cost cuando existe. Si falta costo, se estima costo = venta / 3 y utilidad = venta * 2/3. Gastos se restan una sola vez. Unidades no incluyen ventas parciales sin articulos.</div>
       </div>
     </details>
@@ -2714,33 +2714,40 @@ function customerKey(sale) {
   return name ? `name:${name}` : ''
 }
 
-function buildMetrics(sales, expenses, cashCuts) {
-  const ticketSales = salesForTicketMetrics(sales)
+function buildMetrics(sales = [], expenses = [], cashCuts = []) {
+  const safeSales = Array.isArray(sales) ? sales : []
+  const safeExpenses = Array.isArray(expenses) ? expenses : []
+  const safeCashCuts = Array.isArray(cashCuts) ? cashCuts : []
+  const ticketSales = salesForTicketMetrics(safeSales)
   const salesCount = ticketSales.length
-  const totalSold = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
+  const detailedSales = salesWithItemDetail(safeSales)
+  const unitsSold = totalUnitsOfSales(detailedSales)
+  const totalSold = safeSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
   const ticketMetricTotal = ticketSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0)
   const averageTicket = salesCount ? ticketMetricTotal / salesCount : 0
-  const byPayment = sales.reduce((acc, sale) => {
+  const byPayment = safeSales.reduce((acc, sale) => {
     const method = sale.payment_method || sale.paymentMethod || 'Sin metodo'
     acc[method] = (acc[method] || 0) + Number(sale.total || 0)
     return acc
   }, {})
-  const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
-  const cashExpenses = expenses.filter((expense) => !expense.payment_method || expense.payment_method === 'Efectivo').reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+  const totalExpenses = safeExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+  const cashExpenses = safeExpenses.filter((expense) => !expense.payment_method || expense.payment_method === 'Efectivo').reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
   const cashSales = Number(byPayment.Efectivo || 0)
   const transferTotal = Number(byPayment.Transferencia || 0)
   const cardTotal = Number(byPayment.Tarjeta || 0)
   const mixedTotal = Number(byPayment.Mixto || 0)
   const expectedCash = cashSales
-  const latestDifference = cashCuts.length ? Number(cashCuts[0].difference || 0) : 0
-  const customersCaptured = sales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
-  const profitBreakdown = buildProfitBreakdown(sales, expenses)
+  const latestDifference = safeCashCuts.length ? Number(safeCashCuts[0].difference || 0) : 0
+  const customersCaptured = safeSales.filter((sale) => sale.customer_name || sale.customer_whatsapp).length
+  const profitBreakdown = buildProfitBreakdown(safeSales, safeExpenses)
   const grossProfit = profitBreakdown.grossProfitTotal
   const estimatedCost = profitBreakdown.realCost + profitBreakdown.estimatedCost
-  const netProfit = grossProfit - totalExpenses
-  const partialSalesCount = sales.filter(isPartialWithoutItems).length
+  const netProfit = profitBreakdown.netProfitTotal
+  const partialSalesCount = safeSales.filter(isPartialWithoutItems).length
+  const averageUnitsPerTicket = detailedSales.length ? unitsSold / detailedSales.length : null
+  const marginNet = Number.isFinite(profitBreakdown.marginNet) ? profitBreakdown.marginNet : 0
 
-  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured, partialSalesCount, profitBreakdown }
+  return { salesCount, totalSold, averageTicket, byPayment, totalExpenses, cashExpenses, cashSales, estimatedCost, grossProfit, netProfit, estimatedProfit: netProfit, expectedCash, transferTotal, cardTotal, mixedTotal, latestDifference, customersCaptured, unitsSold, detailedTickets: detailedSales.length, averageUnitsPerTicket, marginNet, partialSalesCount, profitBreakdown }
 }
 
 function calculateCashCutDifference(cashCounted, expectedCash, cashExpenses) {
@@ -2924,6 +2931,12 @@ function formatDecimal(value) {
 function formatOptionalDecimal(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return 'Sin detalle'
   return formatDecimal(value)
+}
+
+function formatPercent(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '0.0%'
+  return `${number.toFixed(1)}%`
 }
 
 const styles = {
