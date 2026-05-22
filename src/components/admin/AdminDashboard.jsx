@@ -62,6 +62,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
   const defaultCity = usesMonthlyGlobalView ? '' : readActiveCityDraft()
 
   const [summary, setSummary] = useState({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
+  const [managerMonthlySummary, setManagerMonthlySummary] = useState({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
   const [inventory, setInventory] = useState({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
   const [eventCity, setEventCity] = useState(defaultCity)
   const [eventDate, setEventDate] = useState(todayInputValue())
@@ -110,13 +111,16 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
     try {
       const shouldLoadInventory = isSuperAdmin || isInvestor
+      const shouldLoadManagerMonthly = isManager && !isSuperAdmin && !isInvestor
       const filters = dashboardFilters({ city, date, month, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
-      const [adminResult, inventoryResult] = await Promise.all([
+      const [adminResult, inventoryResult, managerMonthlyResult] = await Promise.all([
         fetchTodayAdminData(filters),
-        shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
+        shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] }),
+        shouldLoadManagerMonthly ? fetchTodayAdminData({ month }) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
       ])
       setSummary(adminResult)
       setInventory(inventoryResult)
+      if (shouldLoadManagerMonthly) setManagerMonthlySummary(managerMonthlyResult)
       setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city }), filters))
       setLocalBackups(getLocalSaleBackups({ city }))
       setSaveAttempts(getSaleSaveAttempts({ city }))
@@ -134,14 +138,17 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       setError('')
       try {
         const shouldLoadInventory = isSuperAdmin || isInvestor
+        const shouldLoadManagerMonthly = isManager && !isSuperAdmin && !isInvestor
         const filters = dashboardFilters({ city: eventCity.trim(), date: eventDate, month: eventMonth, global: usesMonthlyGlobalView, periodMode, managerPeriodMode })
-        const [adminResult, inventoryResult] = await Promise.all([
+        const [adminResult, inventoryResult, managerMonthlyResult] = await Promise.all([
           fetchTodayAdminData(filters),
-          shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] })
+          shouldLoadInventory ? fetchInventoryData() : Promise.resolve({ storage: 'supabase', lots: [], lotItems: [], productCodes: [], saleItems: [] }),
+          shouldLoadManagerMonthly ? fetchTodayAdminData({ month: eventMonth }) : Promise.resolve({ storage: 'supabase', sales: [], expenses: [], cashCuts: [] })
         ])
         if (alive) {
           setSummary(adminResult)
           setInventory(inventoryResult)
+          if (shouldLoadManagerMonthly) setManagerMonthlySummary(managerMonthlyResult)
           setPendingLocalSales(filterPendingByPeriod(getPendingLocalSales({ city: eventCity.trim() }), filters))
           setLocalBackups(getLocalSaleBackups({ city: eventCity.trim() }))
           setSaveAttempts(getSaleSaveAttempts({ city: eventCity.trim() }))
@@ -157,16 +164,18 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
       alive = false
       window.clearTimeout(timeout)
     }
-  }, [eventCity, eventDate, eventMonth, isSuperAdmin, isInvestor, usesMonthlyGlobalView, periodMode, managerPeriodMode])
+  }, [eventCity, eventDate, eventMonth, isManager, isSuperAdmin, isInvestor, usesMonthlyGlobalView, periodMode, managerPeriodMode])
 
 
   const activeSales = useMemo(() => summary.sales.filter((sale) => !isCancelledSale(sale)), [summary.sales])
+  const managerMonthlyActiveSales = useMemo(() => managerMonthlySummary.sales.filter((sale) => !isCancelledSale(sale)), [managerMonthlySummary.sales])
   const cancelledSales = useMemo(() => summary.sales.filter(isCancelledSale), [summary.sales])
   const criticalChanges = useMemo(() => buildCriticalChanges(cancelledSales), [cancelledSales])
   const metrics = useMemo(() => buildMetrics(activeSales, summary.expenses, summary.cashCuts), [activeSales, summary.expenses, summary.cashCuts])
   const inventoryMetrics = useMemo(() => buildInventoryMetrics(inventory, metrics.totalSold, metrics.totalExpenses), [inventory, metrics.totalSold, metrics.totalExpenses])
   const operationalAnalytics = useMemo(() => buildOperationalAnalytics(activeSales, summary.expenses, inventory), [activeSales, summary.expenses, inventory])
   const monthlyAnalytics = useMemo(() => buildMonthlyAnalytics(activeSales, summary.sales, summary.expenses, inventory), [activeSales, summary.sales, summary.expenses, inventory])
+  const managerMonthlyAnalytics = useMemo(() => buildMonthlyAnalytics(managerMonthlyActiveSales, managerMonthlySummary.sales, managerMonthlySummary.expenses, inventory), [managerMonthlyActiveSales, managerMonthlySummary.sales, managerMonthlySummary.expenses, inventory])
   const visibleTickets = useMemo(() => filterTickets(activeSales, ticketSearch), [activeSales, ticketSearch])
   const selectedCityAnalytics = useMemo(() => selectedCityDrill ? buildMonthlyAnalytics(activeSales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.sales.filter((sale) => cityEquals(sale.city, selectedCityDrill)), summary.expenses.filter((expense) => cityEquals(expense.city, selectedCityDrill)), inventory) : null, [activeSales, summary.sales, summary.expenses, inventory, selectedCityDrill])
   const operationsSales = useMemo(() => {
@@ -449,7 +458,7 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
 
   function clearCurrentLocalBackups() {
     const city = eventCity.trim()
-    const first = window.confirm('Esto solo limpia respaldos locales de este dispositivo/evento. No borra ventas guardadas en Supabase.')
+    const first = window.confirm('Esto limpia respaldos locales sincronizados de este dispositivo/evento. No borra ventas guardadas en Supabase.')
     if (!first) return
     const second = window.confirm(`Confirma limpiar respaldos locales de ${city || 'este evento'}. Usa Exportar respaldo JSON antes si tienes duda.`)
     if (!second) return
@@ -647,26 +656,6 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 </label>
               </>
             )}
-
-            {canManageOps && !isInvestor && (
-              <section style={styles.cleanSection}>
-                <div style={styles.sectionHead}>
-                  <h2 style={styles.sectionTitle}>Respaldo local</h2>
-                  <span style={styles.chip}>{localBackups.filter((backup) => backup.status !== 'synced').length} pendiente(s)</span>
-                </div>
-                <div style={styles.grid}>
-                  <Metric label="Pendientes" value={pendingLocalSales.length} />
-                  <Metric label="Respaldos" value={localBackups.length} />
-                </div>
-                <div style={styles.exportGrid}>
-                  <button type="button" style={styles.smallActionButton} onClick={retryFromAttempt} disabled={!localBackups.some((backup) => backup.status !== 'synced') && !pendingLocalSales.length}>Reintentar</button>
-                  <button type="button" style={styles.smallActionButton} onClick={exportLocalBackups} disabled={!localBackups.length}>Exportar JSON</button>
-                  <button type="button" style={styles.smallActionButton} onClick={clearCurrentLocalBackups} disabled={!localBackups.length && !pendingLocalSales.length}>Limpiar evento actual</button>
-                </div>
-                {localBackups.some((backup) => backup.status !== 'synced') && <div style={styles.error}>Hay ventas locales sin sincronizar en este dispositivo.</div>}
-              </section>
-            )}
-
             {usesMonthlyGlobalView && (
               <SuperAdminHierarchy
                 month={eventMonth}
@@ -708,6 +697,10 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                 />
               ) : (
                 <>
+            {canManageOps && !isSuperAdmin && (
+              <ManagerMonthlyOverview analytics={managerMonthlyAnalytics} month={eventMonth} onViewMonth={() => setManagerPeriodMode('month')} />
+            )}
+
             <section style={styles.cleanSection}>
               <div style={styles.sectionHead}>
                 <h2 style={styles.sectionTitle}>Resumen</h2>
@@ -906,24 +899,6 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
                   <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Pendientes locales</h3><span style={styles.chip}>{pendingLocalSales.length}</span></div>
                   {pendingLocalSales.length === 0 ? <div style={styles.empty}>Sin ventas pendientes locales.</div> : pendingLocalSales.slice(0, 6).map((sale) => (
                     <AuditInfoCard key={sale.id || sale.folio} title={sale.folio || 'Pendiente'} meta={sale.city || cityLabel} value={money(sale.total)} status="Pendiente de sincronizar" />
-                  ))}
-                </div>
-
-                <div style={styles.auditGroup}>
-                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Recuperar ventas locales</h3><span style={styles.chip}>{localBackups.length}</span></div>
-                  <div style={styles.exportGrid}>
-                    <button type="button" style={styles.smallActionButton} onClick={retryFromAttempt} disabled={!localBackups.some((backup) => backup.status !== 'synced')}>Forzar sincronizacion</button>
-                    <button type="button" style={styles.smallActionButton} onClick={exportLocalBackups} disabled={!localBackups.length}>Exportar respaldo JSON</button>
-                  </div>
-                  {localBackups.length === 0 ? <div style={styles.empty}>Sin respaldos locales en este dispositivo.</div> : localBackups.slice(0, 10).map((backup) => (
-                    <LocalBackupCard key={backup.localSaleId || backup.id || backup.folio} backup={backup} />
-                  ))}
-                </div>
-
-                <div style={styles.auditGroup}>
-                  <div style={styles.sectionHead}><h3 style={styles.auditTitle}>Ultimos intentos de guardado</h3><span style={styles.chip}>{saveAttempts.length}</span></div>
-                  {saveAttempts.length === 0 ? <div style={styles.empty}>Sin intentos registrados en este dispositivo.</div> : saveAttempts.slice(0, 8).map((attempt) => (
-                    <SaveAttemptCard key={attempt.id || `${attempt.folio}-${attempt.created_at}`} attempt={attempt} onRetry={retryFromAttempt} />
                   ))}
                 </div>
 
@@ -1150,6 +1125,18 @@ function AdminDashboard({ user, onBackToPOS, onLogout }) {
               </>
             )}
 
+            {canManageOps && !isInvestor && (
+              <LocalBackupSummary
+                pendingLocalSales={pendingLocalSales}
+                localBackups={localBackups}
+                saveAttempts={saveAttempts}
+                isSuperAdmin={isSuperAdmin}
+                onRetry={retryFromAttempt}
+                onExport={exportLocalBackups}
+                onClearSynced={clearCurrentLocalBackups}
+              />
+            )}
+
             {!isInvestor && <button type="button" style={styles.secondaryButton} onClick={onLogout}>Cerrar sesion</button>}
           </div>
         </section>
@@ -1176,6 +1163,90 @@ function DataRow({ label, value, strong = false }) {
   )
 }
 
+function ManagerMonthlyOverview({ analytics, month, onViewMonth }) {
+  const rows = analytics?.cityRows || []
+  const max = analytics?.topCitySales || 0
+
+  return (
+    <section style={styles.cleanSection}>
+      <div style={styles.sectionHead}>
+        <h2 style={styles.sectionTitle}>Resumen mensual general</h2>
+        <span style={styles.chip}>{monthLabel(month)}</span>
+      </div>
+      <div style={styles.grid}>
+        <Metric label="Ventas mes" value={money(analytics?.totalSold || 0)} />
+        <Metric label="Tickets mes" value={analytics?.salesCount || 0} />
+        <Metric label="Ticket prom." value={money(analytics?.averageTicket || 0)} />
+        <Metric label="Utilidad neta" value={money(analytics?.netProfit || 0)} />
+        <Metric label="Gastos mes" value={money(analytics?.totalExpenses || 0)} />
+        <Metric label="Ciudades" value={rows.length} />
+      </div>
+      {rows.length > 0 ? (
+        <div style={styles.miniBars}>
+          {rows.slice(0, 5).map((city) => <MonthlyCityMiniRow key={city.city} city={city} max={max} />)}
+        </div>
+      ) : (
+        <div style={styles.empty}>Sin ventas mensuales para resumir.</div>
+      )}
+      <button type="button" style={styles.secondaryButton} onClick={onViewMonth}>Ver mensual</button>
+    </section>
+  )
+}
+
+function MonthlyCityMiniRow({ city, max }) {
+  const width = max > 0 ? Math.max(7, (city.totalSold / max) * 100) : 7
+
+  return (
+    <div style={styles.rankRow}>
+      <div style={styles.rankTop}>
+        <strong>{city.city}</strong>
+        <span>{money(city.totalSold)}</span>
+      </div>
+      <div style={styles.miniBarTrack}>
+        <div style={{ ...styles.miniBarFill, width: `${width}%` }} />
+      </div>
+      <small>{city.salesCount} ticket(s) / Neta {money(city.netProfit)}</small>
+    </div>
+  )
+}
+
+function LocalBackupSummary({ pendingLocalSales, localBackups, saveAttempts, isSuperAdmin, onRetry, onExport, onClearSynced }) {
+  const unsynced = localBackups.filter((backup) => backup.status !== 'synced')
+  const canClearSynced = localBackups.length > 0 && unsynced.length === 0 && pendingLocalSales.length === 0
+
+  return (
+    <section style={styles.cleanSection}>
+      <div style={styles.sectionHead}>
+        <h2 style={styles.sectionTitle}>Respaldo local</h2>
+        <span style={styles.chip}>{unsynced.length ? 'Revisar' : 'OK'}</span>
+      </div>
+      <div style={styles.grid}>
+        <Metric label="Pendientes" value={pendingLocalSales.length + unsynced.length} />
+        <Metric label="Respaldadas" value={localBackups.length} />
+      </div>
+      <div style={styles.exportGrid}>
+        <button type="button" style={styles.smallActionButton} onClick={onRetry} disabled={!unsynced.length && !pendingLocalSales.length}>Reintentar</button>
+        <button type="button" style={styles.smallActionButton} onClick={onExport} disabled={!localBackups.length}>Exportar respaldo</button>
+        <button type="button" style={styles.smallActionButton} onClick={onClearSynced} disabled={!canClearSynced}>Limpiar respaldos sincronizados</button>
+      </div>
+      {unsynced.length > 0 && <div style={styles.error}>Hay ventas locales sin sincronizar en este dispositivo.</div>}
+      {!canClearSynced && localBackups.length > 0 && <div style={styles.notice}>La limpieza se habilita solo cuando no hay pendientes.</div>}
+      {isSuperAdmin && (
+        <details style={styles.breakdownGroup}>
+          <summary style={styles.breakdownSummary}>Ver detalles tecnicos<span>{localBackups.length + saveAttempts.length}</span></summary>
+          <div style={styles.itemStack}>
+            {localBackups.length === 0 ? <div style={styles.empty}>Sin respaldos locales.</div> : localBackups.slice(0, 8).map((backup) => (
+              <LocalBackupCard key={backup.localSaleId || backup.id || backup.folio} backup={backup} />
+            ))}
+            {saveAttempts.slice(0, 6).map((attempt) => (
+              <SaveAttemptCard key={attempt.id || `${attempt.folio}-${attempt.created_at}`} attempt={attempt} onRetry={onRetry} />
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  )
+}
 function MiniBar({ item, max }) {
   const width = max > 0 ? Math.max(7, (item.sales / max) * 100) : 7
 
