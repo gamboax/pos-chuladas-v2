@@ -4,6 +4,9 @@ const LOCAL_SALES_KEY = 'pos_chuladas_local_sales'
 const LOCAL_BACKUPS_KEY = 'pos_chuladas_sale_backups_v1'
 const SAVE_ATTEMPTS_KEY = 'pos_chuladas_save_attempts'
 const LOCAL_SESSION_KEY = 'pos_chuladas_device_session_id'
+const VAULT_DB_NAME = 'pos_chuladas_sale_vault'
+const VAULT_DB_VERSION = 1
+const VAULT_STORE = 'sales'
 const MAX_SAVE_ATTEMPTS = 40
 const MISSING_SCHEMA_CODES = new Set(['42P01', 'PGRST200', 'PGRST202', 'PGRST204', 'PGRST205'])
 const OPTIONAL_SALE_COLUMNS = ['cashier_id', 'status', 'discount', 'operator_name', 'local_sale_id', 'device_session_id', 'source', 'imported_partial', 'original_source_id', 'imported_at', 'import_notes', 'created_at']
@@ -13,69 +16,139 @@ const OPTIONAL_PURCHASE_LOT_COLUMNS = ['name', 'purchase_place', 'purchase_date'
 const OPTIONAL_PURCHASE_ITEM_COLUMNS = ['product_code_id', 'code', 'quantity_purchased', 'quantity', 'suggested_price', 'total_cost']
 
 let pendingSyncInFlight = false
+let indexedVaultCache = []
+let indexedVaultLoaded = false
 
 export async function saveSale(sale) {
+  return commitSaleDurably(sale)
+}
+
+export async function commitSaleDurably(sale) {
   const safeSale = normalizeSaleForPersistence(sale)
-  const guaranteedBackup = persistSaleDraftBeforeAnything(safeSale, {
-    stage: 'saveSale_entry',
-    ticketText: sale.ticketText || ''
-  })
-  const salePayload = buildSalePayload(safeSale)
-  const saleItemsPayload = buildSaleItemsPayload('pending-sale-id', safeSale.items)
-  const localBackup = saveLocalSale(
-    { ...safeSale, localSaleId: guaranteedBackup.localSaleId, clientSaleId: guaranteedBackup.localSaleId },
-    hasSupabaseConfig && supabase ? 'Respaldo local antes de sincronizar.' : 'Supabase no esta configurado en este entorno.',
-    { syncStatus: 'pending', syncError: '' }
-  )
+  const localSaleId = safeSale.localSaleId || safeSale.clientSaleId || createLocalSaleId()
+  const createdAt = safeSale.createdAt || safeSale.created_at || new Date().toISOString()
+  const saleWithIds = {
+    ...safeSale,
+    localSaleId,
+    clientSaleId: localSaleId,
+    createdAt,
+    deviceSessionId: getDeviceSessionId()
+  }
+  const salePayload = buildSalePayload(saleWithIds)
+  const saleItemsPayload = buildSaleItemsPayload('pending-sale-id', saleWithIds.items)
+  let guaranteedBackup
+
+  try {
+    guaranteedBackup = await persistSaleDraftDurably(saleWithIds, {
+      stage: 'commit_before_supabase',
+      ticketText: sale.ticketText || ''
+    })
+  } catch (error) {
+    recordSaleSaveAttempt({
+      status: 'error',
+      stage: 'local_vault_failed',
+      sale: saleWithIds,
+      salePayload,
+      saleItemsPayload,
+      error: error.message || 'No se pudo escribir respaldo local durable.'
+    })
+    throw new Error(`No se pudo guardar venta. No cierres esta pantalla. ${error.message || 'Fallo el respaldo local.'}`, { cause: error })
+  }
+
+  let localBackup
+  try {
+    localBackup = saveLocalSale(
+      saleWithIds,
+      hasSupabaseConfig && supabase ? 'Respaldo local antes de sincronizar.' : 'Supabase no esta configurado en este entorno.',
+      { syncStatus: 'pending', syncError: '' }
+    )
+  } catch (error) {
+    recordSaleSaveAttempt({
+      status: 'error',
+      stage: 'local_sales_mirror_failed',
+      sale: saleWithIds,
+      salePayload,
+      saleItemsPayload,
+      error: error.message || 'No se pudo escribir espejo localStorage.'
+    })
+    localBackup = saleBackupToLocalSale(guaranteedBackup, 'Respaldo IndexedDB activo; espejo localStorage fallo.')
+  }
 
   recordSaleSaveAttempt({
     status: hasSupabaseConfig && supabase ? 'syncing' : 'pending',
-    stage: hasSupabaseConfig && supabase ? 'local_backup' : 'local_only',
-    sale: safeSale,
+    stage: hasSupabaseConfig && supabase ? 'local_vault_ok' : 'local_vault_only',
+    sale: saleWithIds,
     salePayload,
     saleItemsPayload,
     error: hasSupabaseConfig && supabase ? '' : 'Supabase no esta configurado en este entorno.'
   })
 
   if (!hasSupabaseConfig || !supabase) {
-    return localBackup
+    return { ...localBackup, backupStatus: guaranteedBackup.status, vaultStorage: guaranteedBackup.vaultStorage }
   }
 
   try {
-    const savedSale = await saveSaleToSupabase(safeSale)
-    markLocalSaleSynced(localBackup.id, safeSale.folio, savedSale)
+    const savedSale = await saveSaleToSupabase(saleWithIds)
+    try {
+      markLocalSaleSynced(localBackup.id, saleWithIds.folio, savedSale)
+    } catch (error) {
+      console.error('[POS vault] No se pudo marcar espejo local como sincronizado:', error)
+    }
     recordSaleSaveAttempt({
       status: 'synced',
       stage: savedSale.storageLabel || 'supabase_saved',
-      sale: safeSale,
+      sale: saleWithIds,
       salePayload,
       saleItemsPayload,
       supabaseId: savedSale.id
     })
-    markSaleBackupStatus(guaranteedBackup.localSaleId, safeSale.folio, {
+    try {
+      markSaleBackupStatus(guaranteedBackup.localSaleId, saleWithIds.folio, {
+        status: 'synced',
+        supabaseId: savedSale.id,
+        error: '',
+        syncedAt: new Date().toISOString()
+      })
+    } catch (error) {
+      console.error('[POS vault] No se pudo marcar localStorage como sincronizado:', error)
+    }
+    await markIndexedSaleBackupStatus(guaranteedBackup.localSaleId, saleWithIds.folio, {
       status: 'synced',
       supabaseId: savedSale.id,
       error: '',
       syncedAt: new Date().toISOString()
     })
-    return savedSale
+    return { ...savedSale, localSaleId, backupStatus: 'synced', vaultStorage: guaranteedBackup.vaultStorage }
   } catch (error) {
     const message = error.message || 'No se pudo sincronizar la venta.'
     logSupabaseError('[Supabase saveSale] kept local fallback:', message, { salePayload, saleItemsPayload })
-    const pendingSale = markLocalSaleError(localBackup.id, safeSale.folio, message)
+    let pendingSale = null
+    try {
+      pendingSale = markLocalSaleError(localBackup.id, saleWithIds.folio, message)
+    } catch (error) {
+      console.error('[POS vault] No se pudo marcar espejo local con error:', error)
+    }
     recordSaleSaveAttempt({
       status: 'error',
       stage: 'supabase_failed_pending_local',
-      sale: safeSale,
+      sale: saleWithIds,
       salePayload,
       saleItemsPayload,
       error: message
     })
-    markSaleBackupStatus(guaranteedBackup.localSaleId, safeSale.folio, {
+    try {
+      markSaleBackupStatus(guaranteedBackup.localSaleId, saleWithIds.folio, {
+        status: 'pending',
+        error: message
+      })
+    } catch (error) {
+      console.error('[POS vault] No se pudo marcar localStorage como pendiente:', error)
+    }
+    await markIndexedSaleBackupStatus(guaranteedBackup.localSaleId, saleWithIds.folio, {
       status: 'pending',
       error: message
     })
-    return pendingSale || localBackup
+    return { ...(pendingSale || localBackup), localSaleId, backupStatus: 'pending', vaultStorage: guaranteedBackup.vaultStorage }
   }
 }
 
@@ -103,6 +176,47 @@ export function getSaleSaveAttempts(filters = {}) {
 }
 
 export function persistSaleDraftBeforeAnything(sale, metadata = {}) {
+  const backup = buildSaleBackup(sale, metadata)
+  upsertSaleBackup(backup)
+  return backup
+}
+
+async function persistSaleDraftDurably(sale, metadata = {}) {
+  const backup = buildSaleBackup(sale, metadata)
+  const errors = []
+  let indexedOk = false
+  let localOk = false
+
+  try {
+    await upsertIndexedSaleBackup(backup)
+    const confirmed = await readIndexedSaleBackup(backup.localSaleId)
+    if (!confirmed || confirmed.localSaleId !== backup.localSaleId) {
+      throw new Error('IndexedDB no confirmo lectura del respaldo.')
+    }
+    indexedOk = true
+  } catch (error) {
+    errors.push(`IndexedDB: ${error.message || 'fallo desconocido'}`)
+  }
+
+  try {
+    upsertSaleBackup(backup)
+    localOk = true
+  } catch (error) {
+    errors.push(`localStorage: ${error.message || 'fallo desconocido'}`)
+  }
+
+  if (!indexedOk && !localOk) {
+    throw new Error(errors.join(' | ') || 'No se pudo escribir boveda local.')
+  }
+
+  return {
+    ...backup,
+    vaultStorage: indexedOk ? 'indexeddb' : 'localStorage',
+    localStorageOk: localOk
+  }
+}
+
+function buildSaleBackup(sale, metadata = {}) {
   const safeSale = normalizeSaleForPersistence(sale)
   const localSaleId = safeSale.localSaleId || safeSale.clientSaleId || createLocalSaleId()
   const createdAt = safeSale.createdAt || safeSale.created_at || new Date().toISOString()
@@ -114,7 +228,8 @@ export function persistSaleDraftBeforeAnything(sale, metadata = {}) {
     createdAt,
     deviceSessionId
   }
-  const backup = {
+
+  return {
     id: localSaleId,
     localSaleId,
     deviceSessionId,
@@ -134,14 +249,14 @@ export function persistSaleDraftBeforeAnything(sale, metadata = {}) {
     salePayload: buildSalePayload(saleWithIds),
     saleItemsPayload: buildSaleItemsPayload('pending-sale-id', saleWithIds.items)
   }
-
-  upsertSaleBackup(backup)
-  return backup
 }
-
 export function getLocalSaleBackups(filters = {}) {
+  if (!indexedVaultLoaded) {
+    void loadIndexedVaultBackups().catch((error) => console.error('[POS vault] No se pudo cargar IndexedDB:', error))
+  }
   const cityFilter = typeof filters === 'string' ? filters : filters.city
-  const backups = readSaleBackups().filter((sale) => matchesCity(sale, cityFilter))
+  const indexedBackups = indexedVaultCache.filter((sale) => matchesCity(sale, cityFilter))
+  const backups = [...indexedBackups, ...readSaleBackups().filter((sale) => matchesCity(sale, cityFilter))]
   const localSales = readLocalSales()
     .filter((sale) => matchesCity(sale, cityFilter))
     .map((sale) => {
@@ -201,6 +316,8 @@ export function clearLocalEventBackups(filters = {}) {
   const removed = before.filter((backup) => matchesCity(backup, cityFilter))
   const kept = before.filter((backup) => !matchesCity(backup, cityFilter))
   writeSaleBackups(kept)
+  indexedVaultCache = indexedVaultCache.filter((backup) => !matchesCity(backup, cityFilter))
+  void clearIndexedSaleBackups(cityFilter)
 
   const localBefore = readLocalSales()
   const localRemoved = localBefore.filter((sale) => matchesCity(sale, cityFilter))
@@ -234,6 +351,12 @@ export function exportLocalSaleBackups(filters = {}) {
 }
 
 export async function recoverLocalSalesOnStartup(filters = {}) {
+  try {
+    await loadIndexedVaultBackups()
+  } catch (error) {
+    console.error('[POS vault] No se pudo cargar IndexedDB al iniciar:', error)
+  }
+
   if (!hasSupabaseConfig || !supabase) {
     return { synced: [], failed: [], total: getUnsyncedLocalBackups(filters).length, skipped: true }
   }
@@ -338,6 +461,11 @@ export async function retryPendingLocalSales(filters = {}) {
 
 export async function retryLocalSaleBackups(filters = {}) {
   requireSupabase('recuperar respaldos locales')
+  try {
+    await loadIndexedVaultBackups()
+  } catch (error) {
+    console.error('[POS vault] No se pudo cargar IndexedDB antes de reintentar:', error)
+  }
 
   const cityFilter = typeof filters === 'string' ? filters : filters.city
   const backups = getLocalSaleBackups({ city: cityFilter }).filter((backup) => backup.status !== 'synced')
@@ -1571,7 +1699,7 @@ function saveLocalSale(sale, reason, options = {}) {
     localSaleId: localId,
     clientSaleId: localId,
     deviceSessionId: getDeviceSessionId(),
-    created_at: now,
+    created_at: sale.createdAt || sale.created_at || now,
     storage: 'local',
     storageLabel: 'Pendiente de sincronizar',
     storageReason: reason,
@@ -1633,6 +1761,149 @@ function markLocalSaleError(localId, folio, message) {
   return updatedSale
 }
 
+function saleBackupToLocalSale(backup, reason) {
+  const sale = backup.sale || {}
+  return {
+    ...sale,
+    id: backup.localSaleId || backup.id,
+    localSaleId: backup.localSaleId || backup.id,
+    clientSaleId: backup.localSaleId || backup.id,
+    deviceSessionId: backup.deviceSessionId || getDeviceSessionId(),
+    created_at: backup.created_at || sale.createdAt || sale.created_at || new Date().toISOString(),
+    storage: 'local',
+    storageLabel: 'Pendiente de sincronizar',
+    storageReason: reason,
+    pendingSync: true,
+    syncStatus: backup.status === 'synced' ? 'synced' : 'pending',
+    syncAttempts: Number(sale.syncAttempts || 0),
+    syncError: backup.error || ''
+  }
+}
+
+function supportsIndexedVault() {
+  return typeof window !== 'undefined' && typeof indexedDB !== 'undefined'
+}
+
+function openVaultDb() {
+  if (!supportsIndexedVault()) {
+    return Promise.reject(new Error('IndexedDB no esta disponible.'))
+  }
+
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(VAULT_DB_NAME, VAULT_DB_VERSION)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(VAULT_STORE)) {
+        db.createObjectStore(VAULT_STORE, { keyPath: 'localSaleId' })
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error || new Error('No se pudo abrir IndexedDB.'))
+    request.onblocked = () => reject(new Error('IndexedDB esta bloqueado por otra pestana.'))
+  })
+}
+
+async function upsertIndexedSaleBackup(backup) {
+  const db = await openVaultDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(VAULT_STORE, 'readwrite')
+    transaction.objectStore(VAULT_STORE).put(backup)
+    transaction.oncomplete = () => {
+      db.close()
+      upsertIndexedCache(backup)
+      indexedVaultLoaded = true
+      resolve(backup)
+    }
+    transaction.onerror = () => {
+      db.close()
+      reject(transaction.error || new Error('No se pudo escribir IndexedDB.'))
+    }
+    transaction.onabort = () => {
+      db.close()
+      reject(transaction.error || new Error('Escritura IndexedDB abortada.'))
+    }
+  })
+}
+
+async function readIndexedSaleBackup(localSaleId) {
+  if (!localSaleId) return null
+  const db = await openVaultDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(VAULT_STORE, 'readonly')
+    const request = transaction.objectStore(VAULT_STORE).get(localSaleId)
+    request.onsuccess = () => {
+      db.close()
+      resolve(request.result || null)
+    }
+    request.onerror = () => {
+      db.close()
+      reject(request.error || new Error('No se pudo leer IndexedDB.'))
+    }
+  })
+}
+
+async function loadIndexedVaultBackups() {
+  if (!supportsIndexedVault()) return []
+  const db = await openVaultDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(VAULT_STORE, 'readonly')
+    const request = transaction.objectStore(VAULT_STORE).getAll()
+    request.onsuccess = () => {
+      db.close()
+      indexedVaultCache = Array.isArray(request.result) ? request.result : []
+      indexedVaultLoaded = true
+      resolve(indexedVaultCache)
+    }
+    request.onerror = () => {
+      db.close()
+      reject(request.error || new Error('No se pudo leer boveda IndexedDB.'))
+    }
+  })
+}
+
+async function markIndexedSaleBackupStatus(localSaleId, folio, updates) {
+  try {
+    await loadIndexedVaultBackups()
+    const backup = indexedVaultCache.find((item) => item.localSaleId === localSaleId || item.id === localSaleId || item.folio === folio)
+    if (!backup) return
+    await upsertIndexedSaleBackup({
+      ...backup,
+      ...updates,
+      updated_at: new Date().toISOString()
+    })
+  } catch (error) {
+    console.error('[POS vault] No se pudo actualizar IndexedDB:', error)
+  }
+}
+
+async function clearIndexedSaleBackups(cityFilter) {
+  try {
+    await loadIndexedVaultBackups()
+    const db = await openVaultDb()
+    const kept = indexedVaultCache.filter((backup) => !matchesCity(backup, cityFilter))
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(VAULT_STORE, 'readwrite')
+      const store = transaction.objectStore(VAULT_STORE)
+      transaction.oncomplete = resolve
+      transaction.onerror = () => reject(transaction.error || new Error('No se pudo limpiar IndexedDB.'))
+      store.clear()
+      kept.forEach((backup) => store.put(backup))
+    })
+    db.close()
+    indexedVaultCache = kept
+    indexedVaultLoaded = true
+  } catch (error) {
+    console.error('[POS vault] No se pudo limpiar IndexedDB:', error)
+  }
+}
+
+function upsertIndexedCache(backup) {
+  const key = backup.localSaleId || backup.id || backup.folio
+  indexedVaultCache = [
+    backup,
+    ...indexedVaultCache.filter((item) => (item.localSaleId || item.id || item.folio) !== key && item.folio !== backup.folio)
+  ]
+}
 function readLocalSales() {
   try {
     return JSON.parse(window.localStorage.getItem(LOCAL_SALES_KEY) || '[]')

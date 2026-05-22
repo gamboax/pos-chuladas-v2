@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { createFolio } from '../lib/folio'
-import { assertSalePersistence, exportLocalSaleBackups, fetchTodayAdminData, getLocalSaleBackups, getPendingLocalSales, recoverLocalSalesOnStartup, persistSaleDraftBeforeAnything, retryLocalSaleBackups, retryPendingLocalSales, saveSale } from '../lib/sales'
+import { assertSalePersistence, commitSaleDurably, exportLocalSaleBackups, fetchTodayAdminData, getLocalSaleBackups, getPendingLocalSales, recoverLocalSalesOnStartup, retryLocalSaleBackups, retryPendingLocalSales } from '../lib/sales'
 import { buildTicket, money } from '../lib/ticket'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
 import CaptureCalculator from './pos/CaptureCalculator'
@@ -110,19 +110,21 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
     let alive = true
     const timeout = window.setTimeout(async () => {
-      const backups = getLocalSaleBackups({ city: activeCity })
-      const unsynced = backups.filter((backup) => backup.status !== 'synced')
-      setLocalBackupCount(backups.filter((backup) => backup.status !== 'synced').length)
+      const initialBackups = getLocalSaleBackups({ city: activeCity })
+      const initialUnsynced = initialBackups.filter((backup) => backup.status !== 'synced')
+      setLocalBackupCount(initialUnsynced.length)
       setPendingCount(getPendingLocalSales({ city: activeCity }).length)
-      if (!unsynced.length) return
 
-      setPendingSyncMessage('Recuperando respaldos locales...')
       try {
+        if (initialUnsynced.length) setPendingSyncMessage('Recuperando respaldos locales...')
         const result = await recoverLocalSalesOnStartup({ city: activeCity })
         if (!alive) return
-        setPendingSyncMessage(result.failed?.length ? `${result.synced.length} recuperada(s), ${result.failed.length} pendiente(s).` : 'Respaldos recuperados.')
+        const nextUnsynced = unsyncedBackupCount(activeCity)
         setPendingCount(getPendingLocalSales({ city: activeCity }).length)
-        setLocalBackupCount(unsyncedBackupCount(activeCity))
+        setLocalBackupCount(nextUnsynced)
+        if (result.total || nextUnsynced) {
+          setPendingSyncMessage(result.failed?.length ? `${result.synced.length} recuperada(s), ${result.failed.length} pendiente(s).` : 'Respaldos revisados.')
+        }
       } catch (error) {
         if (alive) setPendingSyncMessage(error.message || 'Hay respaldos locales pendientes.')
       }
@@ -394,26 +396,12 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         date: savedAt.toLocaleDateString('es-MX'),
         time: savedAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
       }
-      const localBackup = persistSaleDraftBeforeAnything(
-        {
-          ...saleToSave,
-          createdAt: savedAt.toISOString(),
-          ticketText: buildTicket(draftTicketSale)
-        },
-        {
-          stage: 'cashier_before_supabase',
-          ticketText: buildTicket(draftTicketSale)
-        }
-      )
-      setLocalBackupCount(unsyncedBackupCount(activeCity))
       const saleForSave = {
         ...saleToSave,
-        localSaleId: localBackup.localSaleId,
-        clientSaleId: localBackup.localSaleId,
-        createdAt: localBackup.created_at,
-        ticketText: localBackup.ticketText
+        createdAt: savedAt.toISOString(),
+        ticketText: buildTicket(draftTicketSale)
       }
-      const savedSale = await saveSale(saleForSave)
+      const savedSale = await commitSaleDurably(saleForSave)
       const confirmedBackup = assertSalePersistence({
         folio: saleForSave.folio,
         localSaleId: saleForSave.localSaleId,
@@ -428,8 +416,8 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
         storageReason: savedSale.storageReason || '',
         cashier: cashierName,
         customerPhone: saleToSave.customerWhatsapp,
-        localSaleId: saleForSave.localSaleId,
-        backupStatus: confirmedBackup.status || 'pending',
+        localSaleId: savedSale.localSaleId || confirmedBackup.localSaleId || saleForSave.localSaleId,
+        backupStatus: savedSale.backupStatus || confirmedBackup.status || 'pending',
         date: createdAt.toLocaleDateString('es-MX'),
         time: createdAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
       }
@@ -448,8 +436,31 @@ function CashierPOS({ user, onLogout, onOpenAdmin }) {
 
   function openPendingSales() {
     const pending = getPendingLocalSales({ city: activeCity })
-    setPendingSales(pending)
+    const backupSales = getLocalSaleBackups({ city: activeCity })
+      .filter((backup) => backup.status !== 'synced')
+      .map((backup) => ({
+        ...(backup.sale || {}),
+        id: backup.localSaleId || backup.id || backup.folio,
+        folio: backup.folio,
+        city: backup.city,
+        total: backup.total,
+        items: backup.sale?.items || [],
+        syncStatus: backup.status || 'pending',
+        syncError: backup.error || '',
+        pendingSync: true,
+        storage: 'local',
+        storageLabel: 'Respaldada localmente'
+      }))
+    const seen = new Set()
+    const merged = [...pending, ...backupSales].filter((sale) => {
+      const key = sale.localSaleId || sale.clientSaleId || sale.id || sale.folio
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    setPendingSales(merged)
     setPendingCount(pending.length)
+    setLocalBackupCount(unsyncedBackupCount(activeCity))
     setPendingSyncMessage('')
     setMenuOpen(false)
     setScreen('pending')
@@ -810,7 +821,7 @@ function EventSafetyBanner({ city, isOnline, pendingCount, backupCount, syncing,
 
       {(hasPending || hasBackups) && (
         <div style={styles.eventActions}>
-          {hasPending && <button type="button" style={styles.eventGhostButton} onClick={onOpenPending}>
+          {(hasPending || hasBackups) && <button type="button" style={styles.eventGhostButton} onClick={onOpenPending}>
             Ver
           </button>}
           {hasBackups && <button type="button" style={styles.eventGhostButton} onClick={onExportEmergency}>
